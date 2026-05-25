@@ -53,6 +53,7 @@ class MetadataEditorScreen extends StatefulWidget {
 
 class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
   String? _filePath;
+  String? _fileName;
   TagLibFile? _tagLibFile;
   String? _errorMessage;
   bool _isSaving = false;
@@ -108,13 +109,14 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
   }
 
   /// Opens the file using TagLibFile and updates the state controllers
-  void _loadFile(String path) {
+  void _loadFile(String path, {String? name}) {
     _tagLibFile?.close();
 
     final file = TagLibFile.open(path);
     if (file == null) {
       setState(() {
         _filePath = null;
+        _fileName = null;
         _tagLibFile = null;
         _errorMessage = 'Failed to open file. The audio format may not be supported by TagLib.';
       });
@@ -123,6 +125,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
 
     setState(() {
       _filePath = path;
+      _fileName = name ?? (path.startsWith('content://') ? 'Android Audio File' : File(path).path.split(Platform.pathSeparator).last);
       _tagLibFile = file;
       _errorMessage = null;
       _coverChanged = false;
@@ -146,8 +149,14 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
         allowMultiple: false,
       );
 
-      if (result != null && result.files.single.path != null) {
-        _loadFile(result.files.single.path!);
+      if (result != null) {
+        final file = result.files.single;
+        final path = (Platform.isAndroid && file.identifier != null)
+            ? file.identifier!
+            : file.path;
+        if (path != null) {
+          _loadFile(path, name: file.name);
+        }
       }
     } catch (e) {
       setState(() {
@@ -237,7 +246,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
         );
         // Reload metadata to confirm it writes/reads correctly
         if (_filePath != null) {
-          _loadFile(_filePath!);
+          _loadFile(_filePath!, name: _fileName);
         }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -408,7 +417,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
   }
 
   Widget _buildFileInfoBanner() {
-    final fileName = _filePath != null ? File(_filePath!).path.split(Platform.pathSeparator).last : '';
+    final fileName = _fileName ?? '';
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(

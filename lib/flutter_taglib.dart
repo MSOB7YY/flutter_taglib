@@ -33,7 +33,10 @@ class TagLibFile {
     final pathPtr = path.toNativeUtf8();
     try {
       final handle = bindings.taglib_bridge_open(pathPtr.cast<ffi.Char>());
-      if (handle == ffi.nullptr) return null;
+      if (handle == ffi.nullptr) {
+        print('flutter_taglib: Failed to open path "$path". Check native/platform logs for details.');
+        return null;
+      }
       return TagLibFile._(handle);
     } finally {
       malloc.free(pathPtr);
@@ -49,7 +52,10 @@ class TagLibFile {
   /// Returns `null` if the file could not be opened.
   static TagLibFile? openFd(int fd) {
     final handle = bindings.taglib_bridge_open_fd(fd);
-    if (handle == ffi.nullptr) return null;
+    if (handle == ffi.nullptr) {
+      print('flutter_taglib: Failed to open FD $fd. Check native/platform logs for details.');
+      return null;
+    }
     return TagLibFile._(handle);
   }
 
@@ -58,7 +64,11 @@ class TagLibFile {
   /// Returns `true` on success, `false` on failure.
   bool save() {
     _checkClosed();
-    return bindings.taglib_bridge_save(_handle) == 1;
+    final success = bindings.taglib_bridge_save(_handle) == 1;
+    if (!success) {
+      print('flutter_taglib: Failed to save metadata changes. Check native/platform logs for details.');
+    }
+    return success;
   }
 
   /// Closes the file and releases native resources.

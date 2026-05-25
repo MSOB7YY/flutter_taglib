@@ -52,6 +52,8 @@ void main(List<String> args) async {
         if (input.config.code.targetOS.toString().contains('android') ||
             input.config.code.targetOS.toString().contains('linux'))
           'm',
+        if (input.config.code.targetOS.toString().contains('android'))
+          'log',
       ],
     );
 
