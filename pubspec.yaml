@@ -25,12 +25,4 @@ flutter:
       android:
         package: com.axel10.flutter_taglib
         pluginClass: FlutterTaglibPlugin
-      ios:
-        ffiPlugin: true
-      macos:
-        ffiPlugin: true
-      windows:
-        ffiPlugin: true
-      linux:
-        ffiPlugin: true
 
