@@ -6,6 +6,10 @@ import 'package:hooks/hooks.dart';
 
 void main(List<String> args) async {
   await build(args, (input, output) async {
+    if (!input.config.buildCodeAssets) {
+      return;
+    }
+
     final packageName = input.packageName;
 
     final sources = <String>[
