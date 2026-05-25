@@ -122,6 +122,11 @@ external int taglib_bridge_get_samplerate(ffi.Pointer<TagLibBridgeFile> file);
 @ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgeFile>)>()
 external int taglib_bridge_get_channels(ffi.Pointer<TagLibBridgeFile> file);
 
+@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<TagLibBridgeFile>)>()
+external ffi.Pointer<ffi.Char> taglib_bridge_get_bitrate_mode(
+  ffi.Pointer<TagLibBridgeFile> file,
+);
+
 /// Album Art / Picture APIs
 @ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgeFile>)>()
 external int taglib_bridge_has_cover(ffi.Pointer<TagLibBridgeFile> file);

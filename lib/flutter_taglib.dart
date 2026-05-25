@@ -329,6 +329,26 @@ class TagLibFile {
     return bindings.taglib_bridge_get_channels(_handle);
   }
 
+  /// Bitrate mode (e.g. 'CBR', 'VBR', or 'Unknown').
+  String get bitrateMode {
+    _checkClosed();
+    final ptr = bindings.taglib_bridge_get_bitrate_mode(_handle);
+    if (ptr == ffi.nullptr) return 'Unknown';
+    return ptr.cast<Utf8>().toDartString();
+  }
+
+  /// Detailed audio properties of the file.
+  AudioInfo get audioInfo {
+    _checkClosed();
+    return AudioInfo(
+      duration: duration,
+      bitrate: bitrate,
+      bitrateMode: bitrateMode,
+      sampleRate: sampleRate,
+      channels: channels,
+    );
+  }
+
   // --- Album Art / Cover APIs ---
 
   /// Returns `true` if this file has cover art.
@@ -403,4 +423,34 @@ class TagLibFile {
       malloc.free(dataPtr);
     }
   }
+}
+
+/// Represents detailed audio properties of a file.
+class AudioInfo {
+  /// The duration of the audio.
+  final Duration duration;
+
+  /// The bitrate in kbps.
+  final int bitrate;
+
+  /// The bitrate mode (e.g., 'CBR', 'VBR', or 'Unknown').
+  final String bitrateMode;
+
+  /// The sample rate in Hz.
+  final int sampleRate;
+
+  /// The number of channels.
+  final int channels;
+
+  AudioInfo({
+    required this.duration,
+    required this.bitrate,
+    required this.bitrateMode,
+    required this.sampleRate,
+    required this.channels,
+  });
+
+  @override
+  String toString() =>
+      'AudioInfo(duration: $duration, bitrate: $bitrate kbps, bitrateMode: $bitrateMode, sampleRate: $sampleRate Hz, channels: $channels)';
 }

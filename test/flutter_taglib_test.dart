@@ -17,9 +17,16 @@ void main() {
         print('MP3 SampleRate: ${file.sampleRate} Hz');
         print('MP3 Channels: ${file.channels}');
         
+        print('MP3 BitrateMode: ${file.bitrateMode}');
+        print('MP3 AudioInfo: ${file.audioInfo}');
+        
         expect(file.title, isNotEmpty);
         expect(file.artist, isNotEmpty);
         expect(file.duration.inSeconds, greaterThan(0));
+        expect(file.bitrateMode, anyOf('CBR', 'VBR'));
+        expect(file.audioInfo.duration, equals(file.duration));
+        expect(file.audioInfo.bitrate, equals(file.bitrate));
+        expect(file.audioInfo.bitrateMode, equals(file.bitrateMode));
         file.close();
       }
     });
@@ -31,8 +38,12 @@ void main() {
         print('FLAC Title: "${file.title}"');
         print('FLAC Artist: "${file.artist}"');
         print('FLAC Duration: ${file.duration}');
+        print('FLAC BitrateMode: ${file.bitrateMode}');
+        print('FLAC AudioInfo: ${file.audioInfo}');
         expect(file.title, isNotEmpty);
         expect(file.artist, isNotEmpty);
+        expect(file.bitrateMode, equals('VBR'));
+        expect(file.audioInfo.bitrateMode, equals('VBR'));
         file.close();
       }
     });
@@ -63,7 +74,11 @@ void main() {
       expect(file, isNotNull);
       if (file != null) {
         print('WAV Title: "${file.title}"');
+        print('WAV BitrateMode: ${file.bitrateMode}');
+        print('WAV AudioInfo: ${file.audioInfo}');
         expect(file.title, isNotEmpty);
+        expect(file.bitrateMode, equals('CBR'));
+        expect(file.audioInfo.bitrateMode, equals('CBR'));
         file.close();
       }
     });

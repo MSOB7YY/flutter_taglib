@@ -20,9 +20,10 @@ A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart F
   - Set or update cover art, or remove it entirely.
 - **Audio Technical Properties**: Extract read-only properties:
   - Duration (as Dart `Duration`)
-  - Bitrate (kbps)
+  - Bitrate (kbps) and Bitrate Mode (`CBR`, `VBR`, or `Unknown`)
   - Sample Rate (Hz)
   - Channels (Mono, Stereo, etc.)
+  - Get a structured `AudioInfo` object containing all detailed audio properties.
 - **Scoped Storage & SAF Support (Android)**:
   - Open files using Unix File Descriptors (`openFd`) to bypass Scoped Storage restrictions.
   - Automatically request write permissions using `openAsync` or `requestWriteAccess()`.
@@ -76,10 +77,15 @@ void readMetadata(String filePath) {
     print('Comment:     ${file.comment}');
 
     // Read audio properties
-    print('Duration:    ${file.duration}');
-    print('Bitrate:     ${file.bitrate} kbps');
-    print('Sample Rate: ${file.sampleRate} Hz');
-    print('Channels:    ${file.channels}');
+    print('Duration:     ${file.duration}');
+    print('Bitrate:      ${file.bitrate} kbps');
+    print('Bitrate Mode: ${file.bitrateMode}'); // 'CBR', 'VBR', or 'Unknown'
+    print('Sample Rate:  ${file.sampleRate} Hz');
+    print('Channels:     ${file.channels}');
+
+    // Or retrieve all detailed audio properties as a structured object
+    final audioInfo = file.audioInfo;
+    print('Audio Info:   $audioInfo');
   } finally {
     // Always close the file to release native resources!
     file.close();

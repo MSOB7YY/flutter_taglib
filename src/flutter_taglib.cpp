@@ -6,6 +6,14 @@
 #include <tvariant.h>
 #include <tbytevector.h>
 #include <tstring.h>
+#include <mpegfile.h>
+#include <mpegproperties.h>
+#include <xingheader.h>
+#include <flacfile.h>
+#include <ogg/vorbis/vorbisfile.h>
+#include <ogg/opus/opusfile.h>
+#include <mp4/mp4file.h>
+#include <riff/wav/wavfile.h>
 
 #include <string>
 #include <vector>
@@ -178,6 +186,7 @@ struct TagLibBridgeFile {
     std::string cachedGenre;
     std::string cachedComment;
     std::string cachedCoverMime;
+    std::string cachedBitrateMode;
 };
 
 extern "C" {
@@ -504,6 +513,45 @@ int taglib_bridge_get_channels(TagLibBridgeFile* file) {
         return file->fileRef->audioProperties()->channels();
     } catch (...) {
         return 0;
+    }
+}
+
+const char* taglib_bridge_get_bitrate_mode(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull() || !file->fileRef->audioProperties()) return "";
+    try {
+        auto audioProps = file->fileRef->audioProperties();
+        auto filePtr = file->fileRef->file();
+        
+        if (auto mpegFile = dynamic_cast<TagLib::MPEG::File*>(filePtr)) {
+            auto mpegProps = dynamic_cast<TagLib::MPEG::Properties*>(audioProps);
+            if (mpegProps) {
+                auto xing = mpegProps->xingHeader();
+                if (xing && xing->isValid()) {
+                    if (xing->type() == TagLib::MPEG::XingHeader::Xing || xing->type() == TagLib::MPEG::XingHeader::VBRI) {
+                        file->cachedBitrateMode = "VBR";
+                    } else {
+                        file->cachedBitrateMode = "CBR";
+                    }
+                } else {
+                    file->cachedBitrateMode = "CBR";
+                }
+            } else {
+                file->cachedBitrateMode = "Unknown";
+            }
+        } else if (auto flacFile = dynamic_cast<TagLib::FLAC::File*>(filePtr)) {
+            file->cachedBitrateMode = "VBR";
+        } else if (auto vorbisFile = dynamic_cast<TagLib::Ogg::Vorbis::File*>(filePtr)) {
+            file->cachedBitrateMode = "VBR";
+        } else if (auto opusFile = dynamic_cast<TagLib::Ogg::Opus::File*>(filePtr)) {
+            file->cachedBitrateMode = "VBR";
+        } else if (auto wavFile = dynamic_cast<TagLib::RIFF::WAV::File*>(filePtr)) {
+            file->cachedBitrateMode = "CBR";
+        } else {
+            file->cachedBitrateMode = "Unknown";
+        }
+        return file->cachedBitrateMode.c_str();
+    } catch (...) {
+        return "";
     }
 }
 
