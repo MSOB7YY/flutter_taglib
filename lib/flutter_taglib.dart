@@ -41,10 +41,11 @@ class TagLibFile {
     }
   }
 
-  final ffi.Pointer<bindings.TagLibBridgeFile> _handle;
+  ffi.Pointer<bindings.TagLibBridgeFile> _handle;
+  final String path;
   bool _isClosed = false;
 
-  TagLibFile._(this._handle);
+  TagLibFile._(this._handle, this.path);
 
   /// Opens an audio file by path.
   ///
@@ -57,7 +58,35 @@ class TagLibFile {
         print('flutter_taglib: Failed to open path "$path". Check native/platform logs for details.');
         return null;
       }
-      return TagLibFile._(handle);
+      return TagLibFile._(handle, path);
+    } finally {
+      malloc.free(pathPtr);
+    }
+  }
+
+  /// Opens an audio file by path asynchronously.
+  ///
+  /// On Android, if [writeAccess] is `true`, this method will automatically request
+  /// write permissions for Scoped Storage if needed before opening the file.
+  static Future<TagLibFile?> openAsync(String path, {bool writeAccess = false}) async {
+    String targetPath = path;
+    if (writeAccess && Platform.isAndroid) {
+      final grantedUri = await requestWritePermission(path);
+      if (grantedUri == null) {
+        print('flutter_taglib: Write permission denied for $path');
+        return null;
+      }
+      targetPath = grantedUri;
+    }
+
+    final pathPtr = targetPath.toNativeUtf8();
+    try {
+      final handle = bindings.taglib_bridge_open(pathPtr.cast<ffi.Char>());
+      if (handle == ffi.nullptr) {
+        print('flutter_taglib: Failed to open path "$targetPath". Check native/platform logs for details.');
+        return null;
+      }
+      return TagLibFile._(handle, targetPath);
     } finally {
       malloc.free(pathPtr);
     }
@@ -70,13 +99,44 @@ class TagLibFile {
   /// or MediaStore.
   ///
   /// Returns `null` if the file could not be opened.
-  static TagLibFile? openFd(int fd) {
+  static TagLibFile? openFd(int fd, {String path = ''}) {
     final handle = bindings.taglib_bridge_open_fd(fd);
     if (handle == ffi.nullptr) {
       print('flutter_taglib: Failed to open FD $fd. Check native/platform logs for details.');
       return null;
     }
-    return TagLibFile._(handle);
+    return TagLibFile._(handle, path);
+  }
+
+  /// Requests Android write permission for this file, and if granted,
+  /// reopens the file stream in read-write mode internally.
+  ///
+  /// This must be called **before** modifying metadata fields, as reopening the file
+  /// will discard any unsaved in-memory changes.
+  /// Returns `true` if write access is obtained, or `false` otherwise.
+  Future<bool> requestWriteAccess() async {
+    if (!Platform.isAndroid) return true;
+    _checkClosed();
+
+    final grantedUri = await TagLibFile.requestWritePermission(path);
+    if (grantedUri == null) return false;
+
+    // Close current native handle
+    bindings.taglib_bridge_close(_handle);
+
+    // Open new native handle in read-write mode
+    final pathPtr = grantedUri.toNativeUtf8();
+    try {
+      final newHandle = bindings.taglib_bridge_open(pathPtr.cast<ffi.Char>());
+      if (newHandle == ffi.nullptr) {
+        print('flutter_taglib: Failed to reopen path "$grantedUri" in write mode.');
+        return false;
+      }
+      _handle = newHandle;
+      return true;
+    } finally {
+      malloc.free(pathPtr);
+    }
   }
 
   /// Saves any changes made to the file metadata.

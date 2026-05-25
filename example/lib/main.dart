@@ -109,10 +109,10 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
   }
 
   /// Opens the file using TagLibFile and updates the state controllers
-  void _loadFile(String path, {String? name}) {
+  Future<void> _loadFile(String path, {String? name}) async {
     _tagLibFile?.close();
 
-    final file = TagLibFile.open(path);
+    final file = await TagLibFile.openAsync(path);
     if (file == null) {
       setState(() {
         _filePath = null;
@@ -217,34 +217,21 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
     });
 
     try {
-      var targetPath = _filePath!;
-
-      // Request write permission on Android for content URIs / storage paths
-      if (Platform.isAndroid && _filePath != null) {
-        final grantedUri = await TagLibFile.requestWritePermission(_filePath!);
-        if (grantedUri == null) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to save: Write permission denied.'),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-          setState(() {
-            _isSaving = false;
-          });
-          return;
-        }
-        targetPath = grantedUri;
+      // Request write access (handles Android permissions and reopens in read-write mode)
+      final hasWriteAccess = await _tagLibFile!.requestWriteAccess();
+      if (!hasWriteAccess) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to save: Write permission denied.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+        setState(() {
+          _isSaving = false;
+        });
+        return;
       }
-
-      // Close the existing read-only file and reopen in write mode
-      _tagLibFile?.close();
-      final writableFile = TagLibFile.open(targetPath);
-      if (writableFile == null) {
-        throw Exception('Failed to reopen file in write mode.');
-      }
-      _tagLibFile = writableFile;
 
       // Set updated tag fields
       _tagLibFile!.title = titleController.text;
@@ -274,9 +261,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
           ),
         );
         // Reload metadata to confirm it writes/reads correctly
-        if (_filePath != null) {
-          _loadFile(_filePath!, name: _fileName);
-        }
+        await _loadFile(_tagLibFile!.path, name: _fileName);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
