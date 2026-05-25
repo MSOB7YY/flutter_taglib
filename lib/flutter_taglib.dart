@@ -25,6 +25,20 @@ import 'flutter_taglib_bindings_generated.dart' as bindings;
 class TagLibFile {
   static const MethodChannel _channel = MethodChannel('flutter_taglib');
 
+  static bool? _isSupportedCached;
+
+  /// Returns `true` if the native TagLib library is supported and successfully loaded.
+  static bool get isSupported {
+    if (_isSupportedCached != null) return _isSupportedCached!;
+    try {
+      bindings.taglib_bridge_close(ffi.nullptr);
+      _isSupportedCached = true;
+    } catch (_) {
+      _isSupportedCached = false;
+    }
+    return _isSupportedCached!;
+  }
+
   /// Requests write permission for the given URI on Android.
   ///
   /// For Scoped Storage (Android 10+), modifying files from public directories
@@ -33,6 +47,9 @@ class TagLibFile {
   /// On other platforms, it immediately returns the original URI.
   static Future<String?> requestWritePermission(String uri) async {
     if (!Platform.isAndroid) return uri;
+    if (!isSupported) {
+      throw UnsupportedError('flutter_taglib is not supported or has been disabled on this platform.');
+    }
     try {
       return await _channel.invokeMethod<String>('requestWritePermission', {'uri': uri});
     } catch (e) {
@@ -51,6 +68,9 @@ class TagLibFile {
   ///
   /// Returns `null` if the file could not be opened or is invalid.
   static TagLibFile? open(String path) {
+    if (!isSupported) {
+      throw UnsupportedError('flutter_taglib is not supported or has been disabled on this platform.');
+    }
     final pathPtr = path.toNativeUtf8();
     try {
       final handle = bindings.taglib_bridge_open(pathPtr.cast<ffi.Char>());
@@ -69,6 +89,9 @@ class TagLibFile {
   /// On Android, if [writeAccess] is `true`, this method will automatically request
   /// write permissions for Scoped Storage if needed before opening the file.
   static Future<TagLibFile?> openAsync(String path, {bool writeAccess = false}) async {
+    if (!isSupported) {
+      throw UnsupportedError('flutter_taglib is not supported or has been disabled on this platform.');
+    }
     String targetPath = path;
     if (writeAccess && Platform.isAndroid) {
       final grantedUri = await requestWritePermission(path);
@@ -100,6 +123,9 @@ class TagLibFile {
   ///
   /// Returns `null` if the file could not be opened.
   static TagLibFile? openFd(int fd, {String path = ''}) {
+    if (!isSupported) {
+      throw UnsupportedError('flutter_taglib is not supported or has been disabled on this platform.');
+    }
     final handle = bindings.taglib_bridge_open_fd(fd);
     if (handle == ffi.nullptr) {
       print('flutter_taglib: Failed to open FD $fd. Check native/platform logs for details.');
