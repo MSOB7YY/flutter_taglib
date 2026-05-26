@@ -656,3 +656,10 @@ class AudioInfo {
   String toString() =>
       'AudioInfo(duration: $duration, bitrate: $bitrate kbps, bitrateMode: $bitrateMode, sampleRate: $sampleRate Hz, channels: $channels)';
 }
+
+/// Dummy class used by Flutter platform registration for Dart-only FFI platforms
+/// (macOS, Windows, Linux) to prevent CocoaPods/CMake errors while ensuring
+/// pub.dev correctly lists them as supported.
+class FlutterTaglib {
+  static void registerWith() {}
+}

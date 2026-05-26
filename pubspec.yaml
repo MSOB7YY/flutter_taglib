@@ -37,3 +37,9 @@ flutter:
         pluginClass: FlutterTaglibPlugin
       ios:
         pluginClass: FlutterTaglibPlugin
+      macos:
+        dartPluginClass: FlutterTaglib
+      windows:
+        dartPluginClass: FlutterTaglib
+      linux:
+        dartPluginClass: FlutterTaglib
