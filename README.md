@@ -164,7 +164,28 @@ void handleCoverArt(TagLibFile file, Uint8List? newCoverBytes) {
 
 ### 4. iOS File and Directory Access
 
-On iOS, the plugin now hides the security-scoped bookmark lifecycle behind small typed helpers:
+On iOS, file and directory access uses Apple's security-scoped resource model.
+The plugin wraps that lifecycle in typed helpers so you do not need to work with
+raw MethodChannel maps or manage most of the native details yourself.
+
+There are two separate flows:
+
+1. Audio file editing uses a writable working copy.
+2. Directory access uses security-scoped bookmarks that can be restored later.
+
+#### Audio File Editing Flow
+
+When you pick an audio file with `TagLibFile.pickAudioFileForEditing()`, the
+plugin:
+
+- Presents an iOS document picker.
+- Calls `startAccessingSecurityScopedResource()` for the selected file.
+- Creates a writable working copy in temporary storage.
+- Returns a `PickedAudioFile` with both the working copy path and the original
+  file path.
+
+After you edit metadata and call `save()`, call `PickedAudioFile.commit()` to
+copy the working copy back to the original file.
 
 ```dart
 final picked = await TagLibFile.pickAudioFileForEditing();
@@ -180,7 +201,25 @@ if (picked != null) {
     }
   }
 }
+```
 
+#### Directory Authorization Flow
+
+When you pick a directory with `TagLibFile.pickAuthorizedDirectory()`, the
+plugin:
+
+- Presents an iOS folder picker.
+- Calls `startAccessingSecurityScopedResource()` for the selected directory.
+- Creates a security-scoped bookmark.
+- Stores that bookmark in `UserDefaults` under the key
+  `flutter_taglib.directoryBookmarks`.
+
+That means access can be restored later, even after the app restarts, as long
+as iOS still accepts the bookmark.
+
+Use the returned `AuthorizedDirectory` as a disposable handle:
+
+```dart
 final directory = await TagLibFile.pickAuthorizedDirectory();
 if (directory != null) {
   try {
@@ -191,7 +230,37 @@ if (directory != null) {
 }
 ```
 
-If you need to restore access later, use `TagLibFile.restoreAuthorizedDirectory(path)`.
+#### Restoring Access
+
+If you need to restore a previously authorized directory later, call
+`TagLibFile.restoreAuthorizedDirectory(path)`.
+
+The plugin will:
+
+- Look up the stored bookmark for the path or one of its ancestor directories.
+- Resolve the bookmark with `URL(resolvingBookmarkData:)`.
+- Call `startAccessingSecurityScopedResource()` again.
+- Refresh the bookmark if iOS reports it is stale.
+
+```dart
+final restored = await TagLibFile.restoreAuthorizedDirectory(directoryPath);
+if (restored != null) {
+  try {
+    print('Restored access to: ${restored.path}');
+  } finally {
+    await restored.dispose();
+  }
+}
+```
+
+#### Notes
+
+- `pickAudioFileForEditing()` is for editing individual files, not for
+  persistent directory access.
+- `pickAuthorizedDirectory()` is the entry point for reusable folder access.
+- Always call `dispose()` on `AuthorizedDirectory` when you are done.
+- The bookmark data is persisted on-device via `UserDefaults`, not in your Dart
+  code.
 
 ### 5. Android Scoped Storage & File Descriptors
 
