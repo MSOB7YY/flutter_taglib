@@ -284,12 +284,12 @@ void main() {
       // Read current properties
       final initialProps = file!.properties;
       expect(initialProps, isNotEmpty);
-      expect(initialProps.containsKey('TITLE'), isTrue);
+      expect(initialProps.containsKey(TagProperties.title), isTrue);
 
       // Set new properties
       final unsupported = file.setProperties({
-        'ALBUMARTIST': ['Custom Album Artist'],
-        'COMPOSER': ['Custom Composer'],
+        TagProperties.albumArtist: ['Custom Album Artist'],
+        TagProperties.composer: ['Custom Composer'],
       });
       // MP3 should support ALBUMARTIST and COMPOSER via ID3v2
       expect(unsupported, isEmpty);
@@ -302,8 +302,8 @@ void main() {
       final file2 = TagLibFile.open(tempFile.path);
       expect(file2, isNotNull);
       final newProps = file2!.properties;
-      expect(newProps['ALBUMARTIST'], equals(['Custom Album Artist']));
-      expect(newProps['COMPOSER'], equals(['Custom Composer']));
+      expect(newProps[TagProperties.albumArtist], equals(['Custom Album Artist']));
+      expect(newProps[TagProperties.composer], equals(['Custom Composer']));
       file2.close();
     });
   });

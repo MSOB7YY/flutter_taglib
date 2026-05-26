@@ -751,3 +751,84 @@ class AudioInfo {
 class FlutterTaglib {
   static void registerWith() {}
 }
+
+/// TagLib 属性字典中常用的标准键名常量，用于 [TagLibFile.properties]。
+/// 
+/// 虽然建议使用这些预定义常量以获得 IDE 自动补全支持，
+/// 但您依然可以直接使用任何自定义的字符串作为键。
+abstract final class TagProperties {
+  /// 歌名 / 标题 (TITLE)
+  static const String title = 'TITLE';
+
+  /// 主要艺术家 / 歌手 (ARTIST)
+  static const String artist = 'ARTIST';
+
+  /// 专辑名 (ALBUM)
+  static const String album = 'ALBUM';
+
+  /// 音轨号 (TRACKNUMBER)
+  static const String trackNumber = 'TRACKNUMBER';
+
+  /// 专辑总音轨数 (TRACKTOTAL)
+  static const String trackTotal = 'TRACKTOTAL';
+
+  /// 发行年份 (YEAR)
+  static const String year = 'YEAR';
+
+  /// 发行日期 (通常是 YYYY-MM-DD 格式，比 YEAR 更详细) (DATE)
+  static const String date = 'DATE';
+
+  /// 流派 (GENRE)
+  static const String genre = 'GENRE';
+
+  /// 备注 / 评论 (COMMENT)
+  static const String comment = 'COMMENT';
+
+  /// 专辑艺术家 (常用于合辑) (ALBUMARTIST)
+  static const String albumArtist = 'ALBUMARTIST';
+
+  /// 作曲家 (COMPOSER)
+  static const String composer = 'COMPOSER';
+
+  /// CD / 碟片编号 (DISCNUMBER)
+  static const String discNumber = 'DISCNUMBER';
+
+  /// 总碟片数 (DISCTOTAL)
+  static const String discTotal = 'DISCTOTAL';
+
+  /// 内嵌歌词 (通常是未同步歌词) (LYRICS)
+  static const String lyrics = 'LYRICS';
+
+  /// 每分钟节拍数 (BPM)
+  static const String bpm = 'BPM';
+
+  /// 编码器 / 压制工具 (ENCODER)
+  static const String encoder = 'ENCODER';
+
+  /// 唱片公司 / 出版发行商 (LABEL)
+  static const String label = 'LABEL';
+
+  /// 指挥家 (CONDUCTOR)
+  static const String conductor = 'CONDUCTOR';
+
+  /// 编曲家 (ARRANGER)
+  static const String arranger = 'ARRANGER';
+
+  /// 演奏者 (PERFORMER)
+  static const String performer = 'PERFORMER';
+
+  /// 混音师 (REMIXER)
+  static const String remixer = 'REMIXER';
+
+  /// 国际标准音像制品编码 (ISRC)
+  static const String isrc = 'ISRC';
+
+  /// 条形码 (BARCODE)
+  static const String barcode = 'BARCODE';
+
+  /// 版权声明 (COPYRIGHT)
+  static const String copyright = 'COPYRIGHT';
+
+  /// 相关网址 (URL)
+  static const String url = 'URL';
+}
