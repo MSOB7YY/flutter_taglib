@@ -1,3 +1,6 @@
+## 1.1.1
+* Update document
+
 ## 1.1.0
 * Support PropertyMap
 

@@ -309,6 +309,71 @@ if (file != null) {
 }
 ```
 
+### 6. Advanced Metadata Properties (Generic Properties Map)
+
+For advanced metadata management, TagLib supports a generic properties map (`Map<String, List<String>>`) representing key-value pairs of tags. This allows you to read and write tags that are not exposed via standard high-level properties, or handle tags with multiple values (e.g., multiple artists or genres).
+
+Standard keys are defined as constants in the `TagProperties` class (e.g., `TagProperties.albumArtist`, `TagProperties.lyrics`, `TagProperties.bpm`, etc.).
+
+#### Reading Generic Properties
+
+```dart
+final file = TagLibFile.open(filePath);
+if (file != null) {
+  try {
+    // Get all properties as a Map<String, List<String>>
+    final Map<String, List<String>> props = file.properties;
+
+    // Read standard tags using TagProperties constants
+    final artists = props[TagProperties.artist]; // List of artist names
+    final albumArtist = props[TagProperties.albumArtist]?.firstOrNull;
+    final lyrics = props[TagProperties.lyrics]?.firstOrNull;
+
+    print('Artists: $artists');
+    print('Lyrics: $lyrics');
+    
+    // Print all available properties in the file
+    props.forEach((key, values) {
+      print('$key: $values');
+    });
+  } finally {
+    file.close();
+  }
+}
+```
+
+#### Writing Generic Properties
+
+```dart
+final file = await TagLibFile.openAsync(filePath, writeAccess: true);
+if (file != null) {
+  try {
+    // 1. Prepare properties to set
+    final Map<String, List<String>> newProps = {
+      TagProperties.artist: ['First Artist', 'Second Artist'], // Multiple values
+      TagProperties.albumArtist: ['Various Artists'],
+      TagProperties.lyrics: ['Line 1...\nLine 2...\nLine 3...'],
+      'CUSTOM_TAG': ['Custom Value'], // You can also use custom tags
+    };
+
+    // 2. Set the properties in memory
+    // It returns any properties not supported by this file format
+    final unsupported = file.setProperties(newProps);
+    if (unsupported.isNotEmpty) {
+      print('Warning: Some properties are unsupported by the file format: $unsupported');
+    }
+
+    // 3. Save to write changes to disk
+    final success = file.save();
+    if (success) {
+      print('Generic properties saved successfully!');
+    }
+  } finally {
+    file.close();
+  }
+}
+```
+
 ---
 
 ## Configuration: Selectable Platform Support

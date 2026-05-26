@@ -1,3 +1,6 @@
+/// A high-performance, feature-rich Flutter plugin wrapping TagLib using Dart FFI and Native Assets.
+library;
+
 import 'dart:ffi' as ffi;
 import 'dart:io' show Platform;
 import 'dart:typed_data';
@@ -32,6 +35,9 @@ class TagLibFile {
   static Object? _lastSupportProbeError;
   static StackTrace? _lastSupportProbeStackTrace;
 
+  /// Resets the cached platform support check state.
+  ///
+  /// This causes the next call to [isSupported] to re-probe the native library.
   static void resetSupportCache() {
     _isSupportedCached = null;
     _lastSupportProbeError = null;
@@ -120,6 +126,7 @@ class TagLibFile {
   }
 
   ffi.Pointer<bindings.TagLibBridgeFile> _handle;
+  /// The filesystem path or content URI of the opened audio file.
   final String path;
   bool _isClosed = false;
 
@@ -673,8 +680,13 @@ class TagLibFile {
 /// original file path. Call [commit] after saving metadata to copy the working
 /// copy back to the original file.
 class PickedAudioFile {
+  /// The local file path of the temporary writable copy.
   final String path;
+
+  /// The original picked file path or resource URI.
   final String originalPath;
+
+  /// The original filename or display name, if available.
   final String? name;
 
   PickedAudioFile._({
@@ -700,6 +712,7 @@ class PickedAudioFile {
 /// Dispose this object when the directory is no longer needed to stop
 /// security-scoped access.
 class AuthorizedDirectory {
+  /// The path of the authorized security-scoped directory.
   final String path;
   bool _isDisposed = false;
 
@@ -732,6 +745,7 @@ class AudioInfo {
   /// The number of channels.
   final int channels;
 
+  /// Creates an [AudioInfo] instance representing detailed audio properties.
   AudioInfo({
     required this.duration,
     required this.bitrate,
@@ -749,86 +763,88 @@ class AudioInfo {
 /// (macOS, Windows, Linux) to prevent CocoaPods/CMake errors while ensuring
 /// pub.dev correctly lists them as supported.
 class FlutterTaglib {
+  /// Registers this plugin with the platform-specific build system.
   static void registerWith() {}
 }
 
-/// TagLib 属性字典中常用的标准键名常量，用于 [TagLibFile.properties]。
+/// Commonly used standard property key constants in the TagLib properties dictionary.
+/// Used with [TagLibFile.properties] and [TagLibFile.setProperties].
 /// 
-/// 虽然建议使用这些预定义常量以获得 IDE 自动补全支持，
-/// 但您依然可以直接使用任何自定义的字符串作为键。
+/// Although using these predefined constants is recommended for IDE autocomplete support,
+/// you can still use any custom string as a property key.
 abstract final class TagProperties {
-  /// 歌名 / 标题 (TITLE)
+  /// The song title (TITLE).
   static const String title = 'TITLE';
 
-  /// 主要艺术家 / 歌手 (ARTIST)
+  /// The main artist/performer (ARTIST).
   static const String artist = 'ARTIST';
 
-  /// 专辑名 (ALBUM)
+  /// The album name (ALBUM).
   static const String album = 'ALBUM';
 
-  /// 音轨号 (TRACKNUMBER)
+  /// The track number (TRACKNUMBER).
   static const String trackNumber = 'TRACKNUMBER';
 
-  /// 专辑总音轨数 (TRACKTOTAL)
+  /// The total number of tracks on the album (TRACKTOTAL).
   static const String trackTotal = 'TRACKTOTAL';
 
-  /// 发行年份 (YEAR)
+  /// The release year (YEAR).
   static const String year = 'YEAR';
 
-  /// 发行日期 (通常是 YYYY-MM-DD 格式，比 YEAR 更详细) (DATE)
+  /// The release date, typically in YYYY-MM-DD format (DATE).
   static const String date = 'DATE';
 
-  /// 流派 (GENRE)
+  /// The genre (GENRE).
   static const String genre = 'GENRE';
 
-  /// 备注 / 评论 (COMMENT)
+  /// Comments or notes (COMMENT).
   static const String comment = 'COMMENT';
 
-  /// 专辑艺术家 (常用于合辑) (ALBUMARTIST)
+  /// The album artist, often used for compilations (ALBUMARTIST).
   static const String albumArtist = 'ALBUMARTIST';
 
-  /// 作曲家 (COMPOSER)
+  /// The composer (COMPOSER).
   static const String composer = 'COMPOSER';
 
-  /// CD / 碟片编号 (DISCNUMBER)
+  /// The disc/CD number (DISCNUMBER).
   static const String discNumber = 'DISCNUMBER';
 
-  /// 总碟片数 (DISCTOTAL)
+  /// The total number of discs (DISCTOTAL).
   static const String discTotal = 'DISCTOTAL';
 
-  /// 内嵌歌词 (通常是未同步歌词) (LYRICS)
+  /// Embedded lyrics, typically unsynchronized (LYRICS).
   static const String lyrics = 'LYRICS';
 
-  /// 每分钟节拍数 (BPM)
+  /// Beats per minute (BPM).
   static const String bpm = 'BPM';
 
-  /// 编码器 / 压制工具 (ENCODER)
+  /// The software or tool used for encoding (ENCODER).
   static const String encoder = 'ENCODER';
 
-  /// 唱片公司 / 出版发行商 (LABEL)
+  /// The record label or publisher (LABEL).
   static const String label = 'LABEL';
 
-  /// 指挥家 (CONDUCTOR)
+  /// The conductor (CONDUCTOR).
   static const String conductor = 'CONDUCTOR';
 
-  /// 编曲家 (ARRANGER)
+  /// The arranger (ARRANGER).
   static const String arranger = 'ARRANGER';
 
-  /// 演奏者 (PERFORMER)
+  /// The performer (PERFORMER).
   static const String performer = 'PERFORMER';
 
-  /// 混音师 (REMIXER)
+  /// The remixer (REMIXER).
   static const String remixer = 'REMIXER';
 
-  /// 国际标准音像制品编码 (ISRC)
+  /// International Standard Recording Code (ISRC).
   static const String isrc = 'ISRC';
 
-  /// 条形码 (BARCODE)
+  /// The barcode (BARCODE).
   static const String barcode = 'BARCODE';
 
-  /// 版权声明 (COPYRIGHT)
+  /// The copyright notice (COPYRIGHT).
   static const String copyright = 'COPYRIGHT';
 
-  /// 相关网址 (URL)
+  /// The related URL (URL).
   static const String url = 'URL';
 }
