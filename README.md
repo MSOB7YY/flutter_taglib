@@ -162,7 +162,38 @@ void handleCoverArt(TagLibFile file, Uint8List? newCoverBytes) {
 }
 ```
 
-### 4. Android Scoped Storage & File Descriptors
+### 4. iOS File and Directory Access
+
+On iOS, the plugin now hides the security-scoped bookmark lifecycle behind small typed helpers:
+
+```dart
+final picked = await TagLibFile.pickAudioFileForEditing();
+if (picked != null) {
+  final file = await TagLibFile.openAsync(picked.path);
+  if (file != null) {
+    try {
+      file.title = 'Updated Title';
+      file.save();
+      await picked.commit();
+    } finally {
+      file.close();
+    }
+  }
+}
+
+final directory = await TagLibFile.pickAuthorizedDirectory();
+if (directory != null) {
+  try {
+    print('Authorized directory: ${directory.path}');
+  } finally {
+    await directory.dispose();
+  }
+}
+```
+
+If you need to restore access later, use `TagLibFile.restoreAuthorizedDirectory(path)`.
+
+### 5. Android Scoped Storage & File Descriptors
 
 Android 10+ enforces Scoped Storage. Directly opening a filepath (like `/storage/emulated/0/...`) in C++ write mode will fail unless permissions are handled. `flutter_taglib` offers two ways to handle this:
 

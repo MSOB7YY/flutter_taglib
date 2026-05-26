@@ -508,10 +508,15 @@ class TagLibFile {
     }
   }
 
-  /// (iOS only) Let the user pick a folder and returns a map with:
-  /// - `path`: The absolute path of the chosen directory.
+  /// (iOS only) Lets the user pick an audio file and returns a map with:
+  /// - `path`: The writable working copy path.
+  /// - `originalPath`: The original picked file path.
+  /// - `name`: The file name.
   ///
   /// Returns `null` if the operation was canceled.
+  @Deprecated(
+    'Use pickAudioFileForEditing() instead so callers do not need to handle raw maps.',
+  )
   static Future<Map<String, String>?> pickAudioFile() async {
     if (!Platform.isIOS) {
       throw UnsupportedError('pickAudioFile is only supported on iOS.');
@@ -522,7 +527,42 @@ class TagLibFile {
     return result;
   }
 
+  /// (iOS only) Lets the user pick an audio file for editing.
+  ///
+  /// The returned object tracks the working copy and can commit changes back
+  /// to the original file with [PickedAudioFile.commit].
+  static Future<PickedAudioFile?> pickAudioFileForEditing() async {
+    if (!Platform.isIOS) {
+      throw UnsupportedError(
+        'pickAudioFileForEditing is only supported on iOS.',
+      );
+    }
+
+    final result = await _channel.invokeMapMethod<String, String>(
+      'pickAudioFile',
+    );
+    if (result == null) return null;
+
+    final path = result['path'];
+    final originalPath = result['originalPath'];
+    if (path == null ||
+        path.isEmpty ||
+        originalPath == null ||
+        originalPath.isEmpty) {
+      return null;
+    }
+
+    return PickedAudioFile._(
+      path: path,
+      originalPath: originalPath,
+      name: result['name'],
+    );
+  }
+
   /// (iOS only) Commits a local working copy back to the original picked file.
+  @Deprecated(
+    'Use PickedAudioFile.commit() instead so the relationship between the working copy and original file stays attached to the returned object.',
+  )
   static Future<void> commitPickedFile({
     required String workingPath,
     required String originalPath,
@@ -538,6 +578,9 @@ class TagLibFile {
   /// - `path`: The absolute path of the chosen directory.
   ///
   /// Returns `null` if the operation was canceled.
+  @Deprecated(
+    'Use pickAuthorizedDirectory() instead so callers receive a disposable directory handle instead of a raw map.',
+  )
   static Future<Map<String, String>?> pickAndAuthorizeDirectory() async {
     if (!Platform.isIOS) {
       throw UnsupportedError(
@@ -550,12 +593,36 @@ class TagLibFile {
     return result;
   }
 
+  /// (iOS only) Lets the user pick a directory and returns a handle that can
+  /// be disposed to stop security-scoped access.
+  ///
+  /// The plugin already starts access for the selected directory before this
+  /// method returns.
+  static Future<AuthorizedDirectory?> pickAuthorizedDirectory() async {
+    if (!Platform.isIOS) {
+      throw UnsupportedError(
+        'pickAuthorizedDirectory is only supported on iOS.',
+      );
+    }
+
+    final result = await _channel.invokeMapMethod<String, String>(
+      'pickAndAuthorizeDirectory',
+    );
+    final path = result?['path'];
+    if (path == null || path.isEmpty) return null;
+
+    return AuthorizedDirectory._(path);
+  }
+
   /// (iOS only) Confirms that a directory selected in this session is still authorized.
   ///
   /// Returns a map with:
   /// - `path`: The authorized absolute path of the directory.
   ///
   /// Note: Call [stopAccessingDirectory] with the returned path when finished.
+  @Deprecated(
+    'Use restoreAuthorizedDirectory() instead so the caller can work with a disposable directory handle.',
+  )
   static Future<Map<String, dynamic>?> startAccessingDirectory(
     String path,
   ) async {
@@ -573,6 +640,9 @@ class TagLibFile {
 
   /// (iOS only) Restores a previously authorized directory bookmark for [path]
   /// or one of its ancestor directories.
+  @Deprecated(
+    'Use restoreAuthorizedDirectory() instead so the caller can work with a disposable directory handle.',
+  )
   static Future<Map<String, dynamic>?> restoreDirectoryAccess(
     String path,
   ) async {
@@ -584,10 +654,76 @@ class TagLibFile {
     return result;
   }
 
+  /// (iOS only) Restores a previously authorized directory bookmark for [path]
+  /// or one of its ancestor directories.
+  static Future<AuthorizedDirectory?> restoreAuthorizedDirectory(
+    String path,
+  ) async {
+    if (!Platform.isIOS) return null;
+
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'restoreDirectoryAccess',
+      {'path': path},
+    );
+    final authorizedPath = result?['path'] as String?;
+    if (authorizedPath == null || authorizedPath.isEmpty) return null;
+
+    return AuthorizedDirectory._(authorizedPath);
+  }
+
   /// (iOS only) Stops accessing a security-scoped directory path.
+  @Deprecated(
+    'Use AuthorizedDirectory.dispose() instead so the lifecycle is owned by the returned object.',
+  )
   static Future<void> stopAccessingDirectory(String path) async {
     if (!Platform.isIOS) return;
     await _channel.invokeMethod<void>('stopAccessingDirectory', {'path': path});
+  }
+}
+
+/// Represents a picked audio file on iOS.
+///
+/// On iOS, the plugin gives you a writable working copy path together with the
+/// original file path. Call [commit] after saving metadata to copy the working
+/// copy back to the original file.
+class PickedAudioFile {
+  final String path;
+  final String originalPath;
+  final String? name;
+
+  PickedAudioFile._({
+    required this.path,
+    required this.originalPath,
+    required this.name,
+  });
+
+  /// Returns `true` when the working copy differs from the original file path.
+  bool get needsCommit => path != originalPath;
+
+  /// Commits the working copy back to the original picked file.
+  Future<void> commit() {
+    return TagLibFile.commitPickedFile(
+      workingPath: path,
+      originalPath: originalPath,
+    );
+  }
+}
+
+/// Represents a security-scoped directory access handle on iOS.
+///
+/// Dispose this object when the directory is no longer needed to stop
+/// security-scoped access.
+class AuthorizedDirectory {
+  final String path;
+  bool _isDisposed = false;
+
+  AuthorizedDirectory._(this.path);
+
+  /// Stops accessing the authorized directory.
+  Future<void> dispose() async {
+    if (_isDisposed) return;
+    _isDisposed = true;
+    await TagLibFile.stopAccessingDirectory(path);
   }
 }
 

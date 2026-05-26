@@ -71,14 +71,14 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
   String? _filePath;
   String? _fileName;
   String? _fileDirectoryPath;
-  String? _originalFilePath;
+  PickedAudioFile? _pickedAudioFile;
   TagLibFile? _tagLibFile;
   String? _errorMessage;
   bool _isSaving = false;
   bool _isCheckingDirectoryAccess = false;
   bool _isAuthorizingDirectory = false;
   bool _hasDirectoryWriteAccess = true;
-  String? _authorizedDirectoryPath;
+  AuthorizedDirectory? _authorizedDirectory;
 
   // Controllers for tag fields
   final titleController = TextEditingController();
@@ -137,7 +137,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
   Future<void> _loadFile(
     String path, {
     String? name,
-    String? originalPath,
+    PickedAudioFile? pickedAudioFile,
   }) async {
     _tagLibFile?.close();
     debugPrint('TagLib _loadFile start path=$path name=$name');
@@ -162,44 +162,46 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
         _filePath = null;
         _fileName = null;
         _fileDirectoryPath = null;
-        _originalFilePath = null;
+        _pickedAudioFile = null;
         _tagLibFile = null;
         _errorMessage =
             'Failed to open file. The audio format may not be supported by TagLib.';
         _hasDirectoryWriteAccess = true;
-        _authorizedDirectoryPath = null;
+        _authorizedDirectory = null;
         _isCheckingDirectoryAccess = false;
       });
       return;
     }
     final openedFile = file;
 
-    final sourcePath = originalPath ?? path;
+    final sourcePath = pickedAudioFile?.originalPath ?? path;
     final directoryPath = Platform.isIOS && !sourcePath.startsWith('content://')
         ? File(sourcePath).parent.path
         : null;
-    String? restoredAuthorizedPath;
+    AuthorizedDirectory? restoredDirectoryAccess;
 
     if (Platform.isIOS && directoryPath != null) {
       try {
-        final restoreResult = await TagLibFile.restoreDirectoryAccess(
+        restoredDirectoryAccess = await TagLibFile.restoreAuthorizedDirectory(
           directoryPath,
         );
-        restoredAuthorizedPath = restoreResult?['path'] as String?;
       } catch (e) {
         debugPrint('Failed to restore directory access for $directoryPath: $e');
       }
     }
 
-    if (_authorizedDirectoryPath != null &&
+    if (_authorizedDirectory != null &&
         directoryPath != null &&
-        !_isSameDirectoryOrAncestor(_authorizedDirectoryPath!, directoryPath)) {
+        !_isSameDirectoryOrAncestor(
+          _authorizedDirectory!.path,
+          directoryPath,
+        )) {
       await _releaseDirectoryAccess();
     }
 
     setState(() {
       _filePath = path;
-      _originalFilePath = originalPath;
+      _pickedAudioFile = pickedAudioFile;
       _fileName =
           name ??
           (path.startsWith('content://')
@@ -212,10 +214,10 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
       _customCoverBytes = openedFile.coverData;
       _customCoverMimeType = openedFile.coverMimeType;
       _hasDirectoryWriteAccess =
-          restoredAuthorizedPath != null ||
+          restoredDirectoryAccess != null ||
           !Platform.isIOS ||
           directoryPath == null;
-      _authorizedDirectoryPath = restoredAuthorizedPath;
+      _authorizedDirectory = restoredDirectoryAccess;
       _isCheckingDirectoryAccess = Platform.isIOS && directoryPath != null;
 
       titleController.text = openedFile.title;
@@ -247,13 +249,12 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
   Future<void> _pickAudioFile() async {
     try {
       if (Platform.isIOS) {
-        final result = await TagLibFile.pickAudioFile();
-        final path = result?['path'];
-        if (path != null && path.isNotEmpty) {
+        final result = await TagLibFile.pickAudioFileForEditing();
+        if (result != null) {
           await _loadFile(
-            path,
-            name: result?['name'],
-            originalPath: result?['originalPath'],
+            result.path,
+            name: result.name,
+            pickedAudioFile: result,
           );
         }
         return;
@@ -307,21 +308,11 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
     });
 
     try {
-      final result = await TagLibFile.pickAndAuthorizeDirectory();
-      if (result == null) return;
+      final directoryAccess = await TagLibFile.pickAuthorizedDirectory();
+      if (directoryAccess == null) return;
 
-      final pickedPath = result['path'];
-      if (pickedPath == null || pickedPath.isEmpty) {
-        throw StateError('未能获取目录授权信息。');
-      }
-
-      final accessResult = await TagLibFile.startAccessingDirectory(pickedPath);
-      if (accessResult == null) {
-        throw StateError('未能启动目录访问。');
-      }
-
-      final authorizedPath = accessResult['path'] as String?;
-      if (authorizedPath == null || authorizedPath.isEmpty) {
+      final authorizedPath = directoryAccess.path;
+      if (authorizedPath.isEmpty) {
         throw StateError('未能解析授权目录路径。');
       }
 
@@ -334,7 +325,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
 
       if (!matchesOriginalDirectory) {
         final messenger = ScaffoldMessenger.of(context);
-        await TagLibFile.stopAccessingDirectory(authorizedPath);
+        await directoryAccess.dispose();
         messenger.showSnackBar(
           const SnackBar(
             content: Text('请选择当前文件所在的原目录或其上级目录。'),
@@ -347,7 +338,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
       await _releaseDirectoryAccess();
       if (!mounted) return;
       setState(() {
-        _authorizedDirectoryPath = authorizedPath;
+        _authorizedDirectory = directoryAccess;
         _hasDirectoryWriteAccess = true;
         _isCheckingDirectoryAccess = false;
         _errorMessage = null;
@@ -399,14 +390,16 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
   }
 
   Future<void> _releaseDirectoryAccess() async {
-    final path = _authorizedDirectoryPath;
-    if (path == null || !Platform.isIOS) return;
+    final directoryAccess = _authorizedDirectory;
+    if (directoryAccess == null || !Platform.isIOS) return;
 
-    _authorizedDirectoryPath = null;
+    _authorizedDirectory = null;
     try {
-      await TagLibFile.stopAccessingDirectory(path);
+      await directoryAccess.dispose();
     } catch (e) {
-      debugPrint('Failed to stop accessing directory $path: $e');
+      debugPrint(
+        'Failed to stop accessing directory ${directoryAccess.path}: $e',
+      );
     }
   }
 
@@ -497,12 +490,9 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
 
       if (success) {
         if (Platform.isIOS &&
-            _originalFilePath != null &&
-            _originalFilePath != _tagLibFile!.path) {
-          await TagLibFile.commitPickedFile(
-            workingPath: _tagLibFile!.path,
-            originalPath: _originalFilePath!,
-          );
+            _pickedAudioFile != null &&
+            _pickedAudioFile!.needsCommit) {
+          await _pickedAudioFile!.commit();
           if (!mounted) return;
         }
         ScaffoldMessenger.of(context).showSnackBar(
@@ -515,7 +505,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
         await _loadFile(
           _tagLibFile!.path,
           name: _fileName,
-          originalPath: _originalFilePath,
+          pickedAudioFile: _pickedAudioFile,
         );
       } else {
         if (Platform.isIOS && !_hasDirectoryWriteAccess) {
@@ -760,7 +750,7 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                _originalFilePath ?? _filePath ?? '',
+                _pickedAudioFile?.originalPath ?? _filePath ?? '',
                 style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                 overflow: TextOverflow.fade,
               ),
@@ -1133,57 +1123,71 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
               ),
             ),
             const Divider(color: Color(0xFF334155), height: 24),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 220,
-                mainAxisSpacing: 16,
-                crossAxisSpacing: 16,
-                childAspectRatio: 2.8,
-              ),
-              itemCount: props.length,
-              itemBuilder: (context, index) {
-                final prop = props[index];
-                return Container(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 12,
-                    horizontal: 16,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 360;
+
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: isCompact ? constraints.maxWidth : 220,
+                    mainAxisExtent: 80,
+                    mainAxisSpacing: 16,
+                    crossAxisSpacing: 16,
                   ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F172A),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF334155)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(prop.icon, color: const Color(0xFF34D399), size: 24),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              prop.label,
-                              style: TextStyle(
-                                color: Colors.grey.shade400,
-                                fontSize: 11,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              prop.value,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
+                  itemCount: props.length,
+                  itemBuilder: (context, index) {
+                    final prop = props[index];
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 12,
+                        horizontal: 16,
                       ),
-                    ],
-                  ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF334155)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            prop.icon,
+                            color: const Color(0xFF34D399),
+                            size: 24,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  prop.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.grey.shade400,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  prop.value,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 );
               },
             ),
