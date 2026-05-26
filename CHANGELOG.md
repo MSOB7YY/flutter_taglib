@@ -1,3 +1,6 @@
+## 1.1.0
+* Support PropertyMap
+
 ## 1.0.3
 * Support SPM
 
