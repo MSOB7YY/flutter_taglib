@@ -175,4 +175,79 @@ external int taglib_bridge_set_cover(
   int size,
 );
 
+@ffi.Native<ffi.Pointer<TagLibBridgeProperties> Function()>()
+external ffi.Pointer<TagLibBridgeProperties> taglib_bridge_properties_create();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<TagLibBridgeProperties>)>()
+external void taglib_bridge_properties_free(
+  ffi.Pointer<TagLibBridgeProperties> props,
+);
+
+@ffi.Native<
+  ffi.Pointer<TagLibBridgeProperties> Function(ffi.Pointer<TagLibBridgeFile>)
+>()
+external ffi.Pointer<TagLibBridgeProperties> taglib_bridge_properties_get(
+  ffi.Pointer<TagLibBridgeFile> file,
+);
+
+@ffi.Native<
+  ffi.Pointer<TagLibBridgeProperties> Function(
+    ffi.Pointer<TagLibBridgeFile>,
+    ffi.Pointer<TagLibBridgeProperties>,
+  )
+>()
+external ffi.Pointer<TagLibBridgeProperties> taglib_bridge_properties_set(
+  ffi.Pointer<TagLibBridgeFile> file,
+  ffi.Pointer<TagLibBridgeProperties> props,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgeProperties>)>()
+external int taglib_bridge_properties_size(
+  ffi.Pointer<TagLibBridgeProperties> props,
+);
+
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(ffi.Pointer<TagLibBridgeProperties>, ffi.Int)
+>()
+external ffi.Pointer<ffi.Char> taglib_bridge_properties_key(
+  ffi.Pointer<TagLibBridgeProperties> props,
+  int index,
+);
+
+@ffi.Native<
+  ffi.Int Function(ffi.Pointer<TagLibBridgeProperties>, ffi.Pointer<ffi.Char>)
+>()
+external int taglib_bridge_properties_value_count(
+  ffi.Pointer<TagLibBridgeProperties> props,
+  ffi.Pointer<ffi.Char> key,
+);
+
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(
+    ffi.Pointer<TagLibBridgeProperties>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Int,
+  )
+>()
+external ffi.Pointer<ffi.Char> taglib_bridge_properties_value(
+  ffi.Pointer<TagLibBridgeProperties> props,
+  ffi.Pointer<ffi.Char> key,
+  int value_index,
+);
+
+@ffi.Native<
+  ffi.Void Function(
+    ffi.Pointer<TagLibBridgeProperties>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+  )
+>()
+external void taglib_bridge_properties_add(
+  ffi.Pointer<TagLibBridgeProperties> props,
+  ffi.Pointer<ffi.Char> key,
+  ffi.Pointer<ffi.Char> value,
+);
+
 final class TagLibBridgeFile extends ffi.Opaque {}
+
+final class TagLibBridgeProperties extends ffi.Opaque {}

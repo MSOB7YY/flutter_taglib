@@ -14,9 +14,11 @@
 #include <ogg/opus/opusfile.h>
 #include <mp4/mp4file.h>
 #include <riff/wav/wavfile.h>
+#include <tpropertymap.h>
 
 #include <string>
 #include <vector>
+#include <map>
 #include <cstring>
 
 #include <cstdio>
@@ -623,6 +625,93 @@ int taglib_bridge_set_cover(TagLibBridgeFile* file, const char* mime_type, const
     } catch (...) {
         return 0;
     }
+}
+
+struct TagLibBridgeProperties {
+    TagLib::PropertyMap properties;
+    std::vector<std::string> keys;
+    std::map<std::string, std::vector<std::string>> values;
+
+    void refreshCache() {
+        keys.clear();
+        values.clear();
+        for (auto it = properties.begin(); it != properties.end(); ++it) {
+            std::string keyStr = it->first.to8Bit(true);
+            keys.push_back(keyStr);
+            
+            std::vector<std::string> valStrs;
+            for (auto const& val : it->second) {
+                valStrs.push_back(val.to8Bit(true));
+            }
+            values[keyStr] = valStrs;
+        }
+    }
+};
+
+TagLibBridgeProperties* taglib_bridge_properties_create() {
+    return new TagLibBridgeProperties();
+}
+
+void taglib_bridge_properties_free(TagLibBridgeProperties* props) {
+    if (props) delete props;
+}
+
+TagLibBridgeProperties* taglib_bridge_properties_get(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return nullptr;
+    try {
+        auto* bridgeProps = new TagLibBridgeProperties();
+        bridgeProps->properties = file->fileRef->properties();
+        bridgeProps->refreshCache();
+        return bridgeProps;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+TagLibBridgeProperties* taglib_bridge_properties_set(TagLibBridgeFile* file, TagLibBridgeProperties* props) {
+    if (!file || !file->fileRef || file->fileRef->isNull() || !props) return nullptr;
+    try {
+        TagLib::PropertyMap unsupported = file->fileRef->setProperties(props->properties);
+        
+        auto* bridgeUnsupported = new TagLibBridgeProperties();
+        bridgeUnsupported->properties = unsupported;
+        bridgeUnsupported->refreshCache();
+        return bridgeUnsupported;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+int taglib_bridge_properties_size(TagLibBridgeProperties* props) {
+    if (!props) return 0;
+    return props->keys.size();
+}
+
+const char* taglib_bridge_properties_key(TagLibBridgeProperties* props, int index) {
+    if (!props || index < 0 || index >= (int)props->keys.size()) return "";
+    return props->keys[index].c_str();
+}
+
+int taglib_bridge_properties_value_count(TagLibBridgeProperties* props, const char* key) {
+    if (!props || !key) return 0;
+    auto it = props->values.find(key);
+    if (it == props->values.end()) return 0;
+    return it->second.size();
+}
+
+const char* taglib_bridge_properties_value(TagLibBridgeProperties* props, const char* key, int value_index) {
+    if (!props || !key || value_index < 0) return "";
+    auto it = props->values.find(key);
+    if (it == props->values.end() || value_index >= (int)it->second.size()) return "";
+    return it->second[value_index].c_str();
+}
+
+void taglib_bridge_properties_add(TagLibBridgeProperties* props, const char* key, const char* value) {
+    if (!props || !key || !value) return;
+    TagLib::String tKey(key, TagLib::String::UTF8);
+    TagLib::String tVal(value, TagLib::String::UTF8);
+    props->properties[tKey].append(tVal);
+    props->refreshCache();
 }
 
 } // extern "C"

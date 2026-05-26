@@ -276,5 +276,35 @@ void main() {
         }
       }
     });
+
+    test('Read, write and read back properties (PropertyMap)', () {
+      final file = TagLibFile.open(tempFile.path);
+      expect(file, isNotNull);
+
+      // Read current properties
+      final initialProps = file!.properties;
+      expect(initialProps, isNotEmpty);
+      expect(initialProps.containsKey('TITLE'), isTrue);
+
+      // Set new properties
+      final unsupported = file.setProperties({
+        'ALBUMARTIST': ['Custom Album Artist'],
+        'COMPOSER': ['Custom Composer'],
+      });
+      // MP3 should support ALBUMARTIST and COMPOSER via ID3v2
+      expect(unsupported, isEmpty);
+
+      final saved = file.save();
+      expect(saved, isTrue);
+      file.close();
+
+      // Read back to verify
+      final file2 = TagLibFile.open(tempFile.path);
+      expect(file2, isNotNull);
+      final newProps = file2!.properties;
+      expect(newProps['ALBUMARTIST'], equals(['Custom Album Artist']));
+      expect(newProps['COMPOSER'], equals(['Custom Composer']));
+      file2.close();
+    });
   });
 }

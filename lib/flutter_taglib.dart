@@ -577,6 +577,94 @@ class TagLibFile {
 
     return AuthorizedDirectory._(authorizedPath);
   }
+
+  /// Retrieves a copy of all properties (metadata fields) as a map of keys to lists of values.
+  /// Standard keys include 'TITLE', 'ARTIST', 'ALBUM', 'GENRE', 'ALBUMARTIST', 'COMPOSER', etc.
+  Map<String, List<String>> get properties {
+    _checkClosed();
+    final propsHandle = bindings.taglib_bridge_properties_get(_handle);
+    if (propsHandle == ffi.nullptr) return {};
+
+    final result = <String, List<String>>{};
+    try {
+      final size = bindings.taglib_bridge_properties_size(propsHandle);
+      for (var i = 0; i < size; i++) {
+        final keyPtr = bindings.taglib_bridge_properties_key(propsHandle, i);
+        if (keyPtr == ffi.nullptr) continue;
+        final key = keyPtr.cast<Utf8>().toDartString();
+        
+        final valCount = bindings.taglib_bridge_properties_value_count(propsHandle, keyPtr);
+        final valList = <String>[];
+        for (var j = 0; j < valCount; j++) {
+          final valPtr = bindings.taglib_bridge_properties_value(propsHandle, keyPtr, j);
+          if (valPtr == ffi.nullptr) continue;
+          valList.add(valPtr.cast<Utf8>().toDartString());
+        }
+        result[key] = valList;
+      }
+    } finally {
+      bindings.taglib_bridge_properties_free(propsHandle);
+    }
+    return result;
+  }
+
+  /// Sets/updates properties of the file in memory.
+  /// Call [save] afterwards to commit these changes to disk.
+  /// 
+  /// Returns a map of properties that were not supported by the file format and could not be set.
+  Map<String, List<String>> setProperties(Map<String, List<String>> propertiesMap) {
+    _checkClosed();
+    
+    final propsHandle = bindings.taglib_bridge_properties_create();
+    try {
+      propertiesMap.forEach((key, values) {
+        final keyPtr = key.toNativeUtf8();
+        try {
+          for (final val in values) {
+            final valPtr = val.toNativeUtf8();
+            try {
+              bindings.taglib_bridge_properties_add(
+                propsHandle,
+                keyPtr.cast<ffi.Char>(),
+                valPtr.cast<ffi.Char>(),
+              );
+            } finally {
+              malloc.free(valPtr);
+            }
+          }
+        } finally {
+          malloc.free(keyPtr);
+        }
+      });
+
+      final unsupportedHandle = bindings.taglib_bridge_properties_set(_handle, propsHandle);
+      if (unsupportedHandle == ffi.nullptr) return {};
+
+      final unsupportedResult = <String, List<String>>{};
+      try {
+        final size = bindings.taglib_bridge_properties_size(unsupportedHandle);
+        for (var i = 0; i < size; i++) {
+          final keyPtr = bindings.taglib_bridge_properties_key(unsupportedHandle, i);
+          if (keyPtr == ffi.nullptr) continue;
+          final key = keyPtr.cast<Utf8>().toDartString();
+          
+          final valCount = bindings.taglib_bridge_properties_value_count(unsupportedHandle, keyPtr);
+          final valList = <String>[];
+          for (var j = 0; j < valCount; j++) {
+            final valPtr = bindings.taglib_bridge_properties_value(unsupportedHandle, keyPtr, j);
+            if (valPtr == ffi.nullptr) continue;
+            valList.add(valPtr.cast<Utf8>().toDartString());
+          }
+          unsupportedResult[key] = valList;
+        }
+      } finally {
+        bindings.taglib_bridge_properties_free(unsupportedHandle);
+      }
+      return unsupportedResult;
+    } finally {
+      bindings.taglib_bridge_properties_free(propsHandle);
+    }
+  }
 }
 
 /// Represents a picked audio file on iOS.
