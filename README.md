@@ -230,7 +230,20 @@ Because this plugin compiles TagLib from source using Native Assets:
 - **Android**: Requires NDK configured in your local environment.
 - **iOS/macOS**: Requires Xcode.
 - **Windows**: Requires Visual Studio with C++ build tools.
-- **Linux**: Requires `cmake`, `pkg-config`, and compiler tools (`gcc`/`g++`).
+- **Linux**: Requires build tools and development libraries.
+  On Debian/Ubuntu, install the required packages with:
+  ```bash
+  sudo apt update
+  sudo apt install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+  ```
+  To run or build the application:
+  ```bash
+  # Run in development mode
+  flutter run -d linux
+
+  # Build release version
+  flutter build linux
+  ```
 
 ---
 
