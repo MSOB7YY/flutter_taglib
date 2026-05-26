@@ -29,17 +29,71 @@ class TagLibFile {
   static const MethodChannel _channel = MethodChannel('flutter_taglib');
 
   static bool? _isSupportedCached;
+  static Object? _lastSupportProbeError;
+  static StackTrace? _lastSupportProbeStackTrace;
+
+  static void resetSupportCache() {
+    _isSupportedCached = null;
+    _lastSupportProbeError = null;
+    _lastSupportProbeStackTrace = null;
+  }
 
   /// Returns `true` if the native TagLib library is supported and successfully loaded.
   static bool get isSupported {
     if (_isSupportedCached != null) return _isSupportedCached!;
     try {
+      // `taglib_bridge_close(nullptr)` is a no-op in the native bridge, so this
+      // lets us verify symbol availability without depending on filesystem access.
       bindings.taglib_bridge_close(ffi.nullptr);
       _isSupportedCached = true;
-    } catch (_) {
+      _lastSupportProbeError = null;
+      _lastSupportProbeStackTrace = null;
+    } catch (e, stackTrace) {
+      _logger.warning('flutter_taglib support probe failed: $e');
+      _lastSupportProbeError = e;
+      _lastSupportProbeStackTrace = stackTrace;
       _isSupportedCached = false;
     }
     return _isSupportedCached!;
+  }
+
+  /// Collects runtime diagnostics to help debug platform support issues.
+  static Future<Map<String, String>> collectDiagnostics() async {
+    final diagnostics = <String, String>{
+      'platform': Platform.operatingSystem,
+      'platformVersion': Platform.operatingSystemVersion,
+      'isSupportedCached': '$_isSupportedCached',
+    };
+
+    final supported = isSupported;
+    diagnostics['isSupported'] = '$supported';
+
+    if (_lastSupportProbeError != null) {
+      diagnostics['supportProbeError'] = _lastSupportProbeError.toString();
+    }
+    if (_lastSupportProbeStackTrace != null) {
+      final lines = _lastSupportProbeStackTrace
+          .toString()
+          .split('\n')
+          .take(8)
+          .join('\n');
+      diagnostics['supportProbeStack'] = lines;
+    }
+
+    try {
+      final pluginInfo = await _channel.invokeMapMethod<String, dynamic>(
+        'debugInfo',
+      );
+      if (pluginInfo != null) {
+        diagnostics['pluginDebugInfo'] = pluginInfo.toString();
+      } else {
+        diagnostics['pluginDebugInfo'] = 'null';
+      }
+    } catch (e) {
+      diagnostics['pluginDebugInfoError'] = e.toString();
+    }
+
+    return diagnostics;
   }
 
   /// Requests write permission for the given URI on Android.
@@ -51,10 +105,14 @@ class TagLibFile {
   static Future<String?> requestWritePermission(String uri) async {
     if (!Platform.isAndroid) return uri;
     if (!isSupported) {
-      throw UnsupportedError('flutter_taglib is not supported or has been disabled on this platform.');
+      throw UnsupportedError(
+        'flutter_taglib is not supported or has been disabled on this platform.',
+      );
     }
     try {
-      return await _channel.invokeMethod<String>('requestWritePermission', {'uri': uri});
+      return await _channel.invokeMethod<String>('requestWritePermission', {
+        'uri': uri,
+      });
     } catch (e) {
       _logger.warning('requestWritePermission failed: $e');
       return null;
@@ -72,13 +130,17 @@ class TagLibFile {
   /// Returns `null` if the file could not be opened or is invalid.
   static TagLibFile? open(String path) {
     if (!isSupported) {
-      throw UnsupportedError('flutter_taglib is not supported or has been disabled on this platform.');
+      throw UnsupportedError(
+        'flutter_taglib is not supported or has been disabled on this platform.',
+      );
     }
     final pathPtr = path.toNativeUtf8();
     try {
       final handle = bindings.taglib_bridge_open(pathPtr.cast<ffi.Char>());
       if (handle == ffi.nullptr) {
-        _logger.severe('Failed to open path "$path". Check native/platform logs for details.');
+        _logger.severe(
+          'Failed to open path "$path". Check native/platform logs for details.',
+        );
         return null;
       }
       return TagLibFile._(handle, path);
@@ -91,9 +153,14 @@ class TagLibFile {
   ///
   /// On Android, if [writeAccess] is `true`, this method will automatically request
   /// write permissions for Scoped Storage if needed before opening the file.
-  static Future<TagLibFile?> openAsync(String path, {bool writeAccess = false}) async {
+  static Future<TagLibFile?> openAsync(
+    String path, {
+    bool writeAccess = false,
+  }) async {
     if (!isSupported) {
-      throw UnsupportedError('flutter_taglib is not supported or has been disabled on this platform.');
+      throw UnsupportedError(
+        'flutter_taglib is not supported or has been disabled on this platform.',
+      );
     }
     String targetPath = path;
     if (writeAccess && Platform.isAndroid) {
@@ -109,7 +176,9 @@ class TagLibFile {
     try {
       final handle = bindings.taglib_bridge_open(pathPtr.cast<ffi.Char>());
       if (handle == ffi.nullptr) {
-        _logger.severe('Failed to open path "$targetPath". Check native/platform logs for details.');
+        _logger.severe(
+          'Failed to open path "$targetPath". Check native/platform logs for details.',
+        );
         return null;
       }
       return TagLibFile._(handle, targetPath);
@@ -127,11 +196,15 @@ class TagLibFile {
   /// Returns `null` if the file could not be opened.
   static TagLibFile? openFd(int fd, {String path = ''}) {
     if (!isSupported) {
-      throw UnsupportedError('flutter_taglib is not supported or has been disabled on this platform.');
+      throw UnsupportedError(
+        'flutter_taglib is not supported or has been disabled on this platform.',
+      );
     }
     final handle = bindings.taglib_bridge_open_fd(fd);
     if (handle == ffi.nullptr) {
-      _logger.severe('Failed to open FD $fd. Check native/platform logs for details.');
+      _logger.severe(
+        'Failed to open FD $fd. Check native/platform logs for details.',
+      );
       return null;
     }
     return TagLibFile._(handle, path);
@@ -175,7 +248,9 @@ class TagLibFile {
     _checkClosed();
     final success = bindings.taglib_bridge_save(_handle) == 1;
     if (!success) {
-      _logger.severe('Failed to save metadata changes. Check native/platform logs for details.');
+      _logger.severe(
+        'Failed to save metadata changes. Check native/platform logs for details.',
+      );
     }
     return success;
   }
@@ -370,7 +445,11 @@ class TagLibFile {
 
     final buffer = malloc<ffi.Uint8>(size);
     try {
-      final success = bindings.taglib_bridge_get_cover_data(_handle, buffer, size);
+      final success = bindings.taglib_bridge_get_cover_data(
+        _handle,
+        buffer,
+        size,
+      );
       if (success == 1) {
         final list = buffer.asTypedList(size);
         return Uint8List.fromList(list);
@@ -403,11 +482,12 @@ class TagLibFile {
     _checkClosed();
     if (data == null || data.isEmpty) {
       return bindings.taglib_bridge_set_cover(
-        _handle,
-        ffi.nullptr,
-        ffi.nullptr,
-        0,
-      ) == 1;
+            _handle,
+            ffi.nullptr,
+            ffi.nullptr,
+            0,
+          ) ==
+          1;
     }
 
     final mimePtr = mimeType.toNativeUtf8();
@@ -416,11 +496,12 @@ class TagLibFile {
       final list = dataPtr.asTypedList(data.length);
       list.setAll(0, data);
       return bindings.taglib_bridge_set_cover(
-        _handle,
-        mimePtr.cast<ffi.Char>(),
-        dataPtr,
-        data.length,
-      ) == 1;
+            _handle,
+            mimePtr.cast<ffi.Char>(),
+            dataPtr,
+            data.length,
+          ) ==
+          1;
     } finally {
       malloc.free(mimePtr);
       malloc.free(dataPtr);
@@ -429,31 +510,51 @@ class TagLibFile {
 
   /// (iOS only) Let the user pick a folder and returns a map with:
   /// - `path`: The absolute path of the chosen directory.
-  /// - `bookmark`: A persistent Base64-encoded security-scoped bookmark string.
+  ///
+  /// Returns `null` if the operation was canceled.
+  static Future<Map<String, String>?> pickAudioFile() async {
+    if (!Platform.isIOS) {
+      throw UnsupportedError('pickAudioFile is only supported on iOS.');
+    }
+    final result = await _channel.invokeMapMethod<String, String>(
+      'pickAudioFile',
+    );
+    return result;
+  }
+
+  /// (iOS only) Let the user pick a folder and returns a map with:
+  /// - `path`: The absolute path of the chosen directory.
   ///
   /// Returns `null` if the operation was canceled.
   static Future<Map<String, String>?> pickAndAuthorizeDirectory() async {
     if (!Platform.isIOS) {
-      throw UnsupportedError('pickAndAuthorizeDirectory is only supported on iOS.');
+      throw UnsupportedError(
+        'pickAndAuthorizeDirectory is only supported on iOS.',
+      );
     }
-    final result = await _channel.invokeMapMethod<String, String>('pickAndAuthorizeDirectory');
+    final result = await _channel.invokeMapMethod<String, String>(
+      'pickAndAuthorizeDirectory',
+    );
     return result;
   }
 
-  /// (iOS only) Starts accessing a directory using a saved Base64 security-scoped bookmark.
+  /// (iOS only) Confirms that a directory selected in this session is still authorized.
   ///
   /// Returns a map with:
-  /// - `path`: The resolved absolute path of the directory.
-  /// - `isStale`: `true` if the bookmark needs to be recreated (should call [pickAndAuthorizeDirectory] again).
+  /// - `path`: The authorized absolute path of the directory.
   ///
   /// Note: Call [stopAccessingDirectory] with the returned path when finished.
-  static Future<Map<String, dynamic>?> startAccessingDirectory(String bookmarkBase64) async {
+  static Future<Map<String, dynamic>?> startAccessingDirectory(
+    String path,
+  ) async {
     if (!Platform.isIOS) {
-      throw UnsupportedError('startAccessingDirectory is only supported on iOS.');
+      throw UnsupportedError(
+        'startAccessingDirectory is only supported on iOS.',
+      );
     }
     final result = await _channel.invokeMapMethod<String, dynamic>(
       'startAccessingDirectory',
-      {'bookmark': bookmarkBase64},
+      {'path': path},
     );
     return result;
   }
