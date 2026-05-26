@@ -25,4 +25,6 @@ flutter:
       android:
         package: com.axel10.flutter_taglib
         pluginClass: FlutterTaglibPlugin
+      ios:
+        pluginClass: FlutterTaglibPlugin
 

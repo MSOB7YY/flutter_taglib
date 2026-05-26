@@ -426,6 +426,43 @@ class TagLibFile {
       malloc.free(dataPtr);
     }
   }
+
+  /// (iOS only) Let the user pick a folder and returns a map with:
+  /// - `path`: The absolute path of the chosen directory.
+  /// - `bookmark`: A persistent Base64-encoded security-scoped bookmark string.
+  ///
+  /// Returns `null` if the operation was canceled.
+  static Future<Map<String, String>?> pickAndAuthorizeDirectory() async {
+    if (!Platform.isIOS) {
+      throw UnsupportedError('pickAndAuthorizeDirectory is only supported on iOS.');
+    }
+    final result = await _channel.invokeMapMethod<String, String>('pickAndAuthorizeDirectory');
+    return result;
+  }
+
+  /// (iOS only) Starts accessing a directory using a saved Base64 security-scoped bookmark.
+  ///
+  /// Returns a map with:
+  /// - `path`: The resolved absolute path of the directory.
+  /// - `isStale`: `true` if the bookmark needs to be recreated (should call [pickAndAuthorizeDirectory] again).
+  ///
+  /// Note: Call [stopAccessingDirectory] with the returned path when finished.
+  static Future<Map<String, dynamic>?> startAccessingDirectory(String bookmarkBase64) async {
+    if (!Platform.isIOS) {
+      throw UnsupportedError('startAccessingDirectory is only supported on iOS.');
+    }
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'startAccessingDirectory',
+      {'bookmark': bookmarkBase64},
+    );
+    return result;
+  }
+
+  /// (iOS only) Stops accessing a security-scoped directory path.
+  static Future<void> stopAccessingDirectory(String path) async {
+    if (!Platform.isIOS) return;
+    await _channel.invokeMethod<void>('stopAccessingDirectory', {'path': path});
+  }
 }
 
 /// Represents detailed audio properties of a file.

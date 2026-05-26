@@ -252,14 +252,47 @@ class _MetadataEditorScreenState extends State<MetadataEditorScreen> {
       if (!mounted) return;
 
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Metadata saved successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        // Reload metadata to confirm it writes/reads correctly
-        await _loadFile(_tagLibFile!.path, name: _fileName);
+        if (Platform.isIOS) {
+          final tempPath = _tagLibFile!.path;
+          final originalName = _fileName ?? 'edited_song.m4a';
+
+          // Read the modified bytes from the temporary file
+          final tempFile = File(tempPath);
+          final bytes = await tempFile.readAsBytes();
+
+          // Close the file to flush writes and release locks before saving
+          _tagLibFile?.close();
+          _tagLibFile = null;
+
+          final outputPath = await FilePicker.saveFile(
+            dialogTitle: 'Export Audio File',
+            fileName: originalName,
+            type: FileType.any,
+            bytes: bytes,
+          );
+
+          if (outputPath != null) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('File exported successfully!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+
+          // Reload the temporary file so the user can continue editing inside the sandbox
+          await _loadFile(tempPath, name: originalName);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Metadata saved successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          // Reload metadata to confirm it writes/reads correctly
+          await _loadFile(_tagLibFile!.path, name: _fileName);
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
