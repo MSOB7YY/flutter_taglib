@@ -66,6 +66,20 @@ FFI_PLUGIN_EXPORT const char* taglib_bridge_get_cover_mime_type(TagLibBridgeFile
 // Write album art. mime_type can be "image/jpeg" or "image/png". Pass data=NULL, size=0 to remove cover.
 FFI_PLUGIN_EXPORT int taglib_bridge_set_cover(TagLibBridgeFile* file, const char* mime_type, const uint8_t* data, uint32_t size);
 
+typedef struct TagLibBridgePictures TagLibBridgePictures;
+
+FFI_PLUGIN_EXPORT TagLibBridgePictures* taglib_bridge_pictures_create();
+FFI_PLUGIN_EXPORT void taglib_bridge_pictures_free(TagLibBridgePictures* pictures);
+FFI_PLUGIN_EXPORT TagLibBridgePictures* taglib_bridge_pictures_get(TagLibBridgeFile* file);
+FFI_PLUGIN_EXPORT int taglib_bridge_pictures_set(TagLibBridgeFile* file, TagLibBridgePictures* pictures);
+FFI_PLUGIN_EXPORT int taglib_bridge_pictures_size(TagLibBridgePictures* pictures);
+FFI_PLUGIN_EXPORT uint32_t taglib_bridge_pictures_data_size(TagLibBridgePictures* pictures, int index);
+FFI_PLUGIN_EXPORT int taglib_bridge_pictures_data(TagLibBridgePictures* pictures, int index, uint8_t* buffer, uint32_t buffer_size);
+FFI_PLUGIN_EXPORT const char* taglib_bridge_pictures_mime_type(TagLibBridgePictures* pictures, int index);
+FFI_PLUGIN_EXPORT const char* taglib_bridge_pictures_description(TagLibBridgePictures* pictures, int index);
+FFI_PLUGIN_EXPORT const char* taglib_bridge_pictures_picture_type(TagLibBridgePictures* pictures, int index);
+FFI_PLUGIN_EXPORT void taglib_bridge_pictures_add(TagLibBridgePictures* pictures, const uint8_t* data, uint32_t size, const char* mime_type, const char* picture_type, const char* description);
+
 // PropertyMap / Property Dictionary APIs
 typedef struct TagLibBridgeProperties TagLibBridgeProperties;
 

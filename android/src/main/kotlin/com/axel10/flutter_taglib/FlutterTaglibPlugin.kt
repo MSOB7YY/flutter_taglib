@@ -32,33 +32,14 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
         private const val REQUEST_WRITE_PERMISSION = 1045
     }
 
-    private var isNativeLibraryLoaded = false
-
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
-        try {
-            System.loadLibrary("flutter_taglib")
-            setNativeContext(binding.applicationContext)
-            isNativeLibraryLoaded = true
-            Log.d(TAG, "onAttachedToEngine: Plugin registered and native library loaded")
-        } catch (e: UnsatisfiedLinkError) {
-            Log.w(TAG, "onAttachedToEngine: Failed to load native library flutter_taglib. This is expected if the platform is disabled in configuration: ${e.message}")
-        } catch (e: Exception) {
-            Log.e(TAG, "onAttachedToEngine: Failed to initialize native context: ${e.message}")
-        }
-
         context = binding.applicationContext
         channel = MethodChannel(binding.binaryMessenger, "flutter_taglib")
         channel?.setMethodCallHandler(this)
+        Log.d(TAG, "onAttachedToEngine: Plugin registered")
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
-        if (isNativeLibraryLoaded) {
-            try {
-                clearNativeContext()
-            } catch (e: UnsatisfiedLinkError) {
-                Log.w(TAG, "onDetachedFromEngine: clearNativeContext failed: ${e.message}")
-            }
-        }
         context = null
         channel?.setMethodCallHandler(null)
         channel = null
@@ -74,6 +55,23 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
             }
             Log.d(TAG, "onMethodCall requestWritePermission: uri=$uriStr")
             handleRequestWritePermission(uriStr, result)
+        } else if (call.method == "openWritableFileDescriptor") {
+            val uriStr = call.argument<String>("uri")
+            if (uriStr == null) {
+                result.error("INVALID_ARGUMENT", "URI is null", null)
+                return
+            }
+            Log.d(TAG, "onMethodCall openWritableFileDescriptor: uri=$uriStr")
+            handleOpenFileDescriptor(uriStr, "rw", result)
+        } else if (call.method == "openFileDescriptor") {
+            val uriStr = call.argument<String>("uri")
+            val mode = call.argument<String>("mode") ?: "r"
+            if (uriStr == null) {
+                result.error("INVALID_ARGUMENT", "URI is null", null)
+                return
+            }
+            Log.d(TAG, "onMethodCall openFileDescriptor: uri=$uriStr mode=$mode")
+            handleOpenFileDescriptor(uriStr, mode, result)
         } else {
             result.notImplemented()
         }
@@ -189,6 +187,41 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
             } else {
                 result.success(null)
             }
+        }
+    }
+
+    private fun handleOpenFileDescriptor(uriStr: String, mode: String, result: Result) {
+        val safeContext = context ?: run {
+            Log.e(TAG, "handleOpenFileDescriptor: context is null")
+            result.error("INTERNAL_ERROR", "Context is null", null)
+            return
+        }
+
+        val targetUri = Uri.parse(uriStr)
+        Log.d(TAG, "handleOpenFileDescriptor: targetUri=$targetUri mode=$mode")
+
+        try {
+            safeContext.contentResolver.openFileDescriptor(targetUri, mode)?.use { pfd ->
+                val fd = pfd.detachFd()
+                Log.d(
+                    TAG,
+                    "handleOpenFileDescriptor: opened fd=$fd for $uriStr",
+                )
+                result.success(fd)
+                return
+            }
+            Log.e(
+                TAG,
+                "handleOpenFileDescriptor: openFileDescriptor returned null for $uriStr",
+            )
+            result.success(null)
+        } catch (e: Exception) {
+            Log.e(
+                TAG,
+                "handleOpenFileDescriptor: failed to open fd for $uriStr: ${e.message}",
+                e,
+            )
+            result.success(null)
         }
     }
 
@@ -370,6 +403,4 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
         Log.d(TAG, "onDetachedFromActivity: Activity detached")
     }
 
-    private external fun setNativeContext(context: Context)
-    private external fun clearNativeContext()
 }

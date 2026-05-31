@@ -170,6 +170,10 @@ void handleCoverArt(TagLibFile file, Uint8List? newCoverBytes) {
 }
 ```
 
+If you need the full embedded picture list, use `file.pictures` and
+`file.setPictures(...)`. `setCover(...)` is a convenience wrapper that updates
+the first picture only.
+
 ### 4. iOS File and Directory Access
 
 On iOS, file and directory access uses Apple's security-scoped resource model.

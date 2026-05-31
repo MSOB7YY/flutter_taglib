@@ -175,6 +175,101 @@ external int taglib_bridge_set_cover(
   int size,
 );
 
+@ffi.Native<ffi.Pointer<TagLibBridgePictures> Function()>()
+external ffi.Pointer<TagLibBridgePictures> taglib_bridge_pictures_create();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<TagLibBridgePictures>)>()
+external void taglib_bridge_pictures_free(
+  ffi.Pointer<TagLibBridgePictures> pictures,
+);
+
+@ffi.Native<
+  ffi.Pointer<TagLibBridgePictures> Function(ffi.Pointer<TagLibBridgeFile>)
+>()
+external ffi.Pointer<TagLibBridgePictures> taglib_bridge_pictures_get(
+  ffi.Pointer<TagLibBridgeFile> file,
+);
+
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<TagLibBridgeFile>,
+    ffi.Pointer<TagLibBridgePictures>,
+  )
+>()
+external int taglib_bridge_pictures_set(
+  ffi.Pointer<TagLibBridgeFile> file,
+  ffi.Pointer<TagLibBridgePictures> pictures,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgePictures>)>()
+external int taglib_bridge_pictures_size(
+  ffi.Pointer<TagLibBridgePictures> pictures,
+);
+
+@ffi.Native<ffi.Uint32 Function(ffi.Pointer<TagLibBridgePictures>, ffi.Int)>()
+external int taglib_bridge_pictures_data_size(
+  ffi.Pointer<TagLibBridgePictures> pictures,
+  int index,
+);
+
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<TagLibBridgePictures>,
+    ffi.Int,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Uint32,
+  )
+>()
+external int taglib_bridge_pictures_data(
+  ffi.Pointer<TagLibBridgePictures> pictures,
+  int index,
+  ffi.Pointer<ffi.Uint8> buffer,
+  int buffer_size,
+);
+
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(ffi.Pointer<TagLibBridgePictures>, ffi.Int)
+>()
+external ffi.Pointer<ffi.Char> taglib_bridge_pictures_mime_type(
+  ffi.Pointer<TagLibBridgePictures> pictures,
+  int index,
+);
+
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(ffi.Pointer<TagLibBridgePictures>, ffi.Int)
+>()
+external ffi.Pointer<ffi.Char> taglib_bridge_pictures_description(
+  ffi.Pointer<TagLibBridgePictures> pictures,
+  int index,
+);
+
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(ffi.Pointer<TagLibBridgePictures>, ffi.Int)
+>()
+external ffi.Pointer<ffi.Char> taglib_bridge_pictures_picture_type(
+  ffi.Pointer<TagLibBridgePictures> pictures,
+  int index,
+);
+
+@ffi.Native<
+  ffi.Void Function(
+    ffi.Pointer<TagLibBridgePictures>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+  )
+>()
+external void taglib_bridge_pictures_add(
+  ffi.Pointer<TagLibBridgePictures> pictures,
+  ffi.Pointer<ffi.Uint8> data,
+  int size,
+  ffi.Pointer<ffi.Char> mime_type,
+  ffi.Pointer<ffi.Char> picture_type,
+  ffi.Pointer<ffi.Char> description,
+);
+
 @ffi.Native<ffi.Pointer<TagLibBridgeProperties> Function()>()
 external ffi.Pointer<TagLibBridgeProperties> taglib_bridge_properties_create();
 
@@ -249,5 +344,7 @@ external void taglib_bridge_properties_add(
 );
 
 final class TagLibBridgeFile extends ffi.Opaque {}
+
+final class TagLibBridgePictures extends ffi.Opaque {}
 
 final class TagLibBridgeProperties extends ffi.Opaque {}

@@ -191,6 +191,71 @@ struct TagLibBridgeFile {
     std::string cachedBitrateMode;
 };
 
+struct TagLibBridgePictures {
+    TagLib::List<TagLib::VariantMap> pictures;
+    std::vector<TagLib::VariantMap> cachedPictures;
+    std::vector<std::string> cachedMimeTypes;
+    std::vector<std::string> cachedDescriptions;
+    std::vector<std::string> cachedPictureTypes;
+
+    void refreshCache() {
+        cachedPictures.clear();
+        cachedMimeTypes.clear();
+        cachedDescriptions.clear();
+        cachedPictureTypes.clear();
+
+        for (const auto& picture : pictures) {
+            cachedPictures.push_back(picture);
+
+            auto mimeVar = picture["mimeType"];
+            cachedMimeTypes.push_back(
+                mimeVar.isEmpty() ? std::string() : mimeVar.toString().to8Bit(true)
+            );
+
+            auto descVar = picture["description"];
+            cachedDescriptions.push_back(
+                descVar.isEmpty() ? std::string() : descVar.toString().to8Bit(true)
+            );
+
+            auto typeVar = picture["pictureType"];
+            cachedPictureTypes.push_back(
+                typeVar.isEmpty() ? std::string() : typeVar.toString().to8Bit(true)
+            );
+        }
+    }
+};
+
+static TagLib::List<TagLib::VariantMap> read_picture_list(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) {
+        return TagLib::List<TagLib::VariantMap>();
+    }
+    return file->fileRef->complexProperties("PICTURE");
+}
+
+static const TagLib::VariantMap* picture_at(const TagLibBridgePictures* pictures, int index) {
+    if (!pictures || index < 0 || index >= static_cast<int>(pictures->cachedPictures.size())) {
+        return nullptr;
+    }
+    return &pictures->cachedPictures[static_cast<size_t>(index)];
+}
+
+static TagLib::VariantMap build_picture_map(
+    const uint8_t* data,
+    uint32_t size,
+    const char* mime_type,
+    const char* picture_type,
+    const char* description
+) {
+    TagLib::VariantMap picMap;
+    picMap["data"] = TagLib::ByteVector(reinterpret_cast<const char*>(data), size);
+    picMap["mimeType"] = TagLib::String(mime_type ? mime_type : "image/jpeg", TagLib::String::UTF8);
+    picMap["pictureType"] = TagLib::String(picture_type ? picture_type : "Front Cover", TagLib::String::UTF8);
+    if (description && *description != '\0') {
+        picMap["description"] = TagLib::String(description, TagLib::String::UTF8);
+    }
+    return picMap;
+}
+
 extern "C" {
 
 #ifdef __ANDROID__
@@ -560,7 +625,7 @@ const char* taglib_bridge_get_bitrate_mode(TagLibBridgeFile* file) {
 int taglib_bridge_has_cover(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
     try {
-        auto pictures = file->fileRef->complexProperties("PICTURE");
+        auto pictures = read_picture_list(file);
         return !pictures.isEmpty() ? 1 : 0;
     } catch (...) {
         return 0;
@@ -570,7 +635,7 @@ int taglib_bridge_has_cover(TagLibBridgeFile* file) {
 uint32_t taglib_bridge_get_cover_data_size(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
     try {
-        auto pictures = file->fileRef->complexProperties("PICTURE");
+        auto pictures = read_picture_list(file);
         if (pictures.isEmpty()) return 0;
         auto dataVar = pictures.front()["data"];
         if (dataVar.isEmpty()) return 0;
@@ -583,7 +648,7 @@ uint32_t taglib_bridge_get_cover_data_size(TagLibBridgeFile* file) {
 int taglib_bridge_get_cover_data(TagLibBridgeFile* file, uint8_t* buffer, uint32_t buffer_size) {
     if (!file || !file->fileRef || file->fileRef->isNull() || !buffer || buffer_size == 0) return 0;
     try {
-        auto pictures = file->fileRef->complexProperties("PICTURE");
+        auto pictures = read_picture_list(file);
         if (pictures.isEmpty()) return 0;
         auto dataVar = pictures.front()["data"];
         if (dataVar.isEmpty()) return 0;
@@ -599,7 +664,7 @@ int taglib_bridge_get_cover_data(TagLibBridgeFile* file, uint8_t* buffer, uint32
 const char* taglib_bridge_get_cover_mime_type(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull()) return "";
     try {
-        auto pictures = file->fileRef->complexProperties("PICTURE");
+        auto pictures = read_picture_list(file);
         if (pictures.isEmpty()) return "";
         auto mimeVar = pictures.front()["mimeType"];
         if (mimeVar.isEmpty()) return "";
@@ -615,15 +680,98 @@ int taglib_bridge_set_cover(TagLibBridgeFile* file, const char* mime_type, const
     try {
         TagLib::List<TagLib::VariantMap> pictures;
         if (size > 0 && data != nullptr) {
-            TagLib::VariantMap picMap;
-            picMap["data"] = TagLib::ByteVector((const char*)data, size);
-            picMap["mimeType"] = TagLib::String(mime_type ? mime_type : "image/jpeg", TagLib::String::UTF8);
-            picMap["pictureType"] = TagLib::String("Front Cover");
-            pictures.append(picMap);
+            pictures.append(build_picture_map(data, size, mime_type, "Front Cover", nullptr));
         }
         return file->fileRef->setComplexProperties("PICTURE", pictures) ? 1 : 0;
     } catch (...) {
         return 0;
+    }
+}
+
+TagLibBridgePictures* taglib_bridge_pictures_create() {
+    return new TagLibBridgePictures();
+}
+
+void taglib_bridge_pictures_free(TagLibBridgePictures* pictures) {
+    if (pictures) delete pictures;
+}
+
+TagLibBridgePictures* taglib_bridge_pictures_get(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return nullptr;
+    try {
+        auto* bridgePictures = new TagLibBridgePictures();
+        bridgePictures->pictures = read_picture_list(file);
+        bridgePictures->refreshCache();
+        return bridgePictures;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+int taglib_bridge_pictures_set(TagLibBridgeFile* file, TagLibBridgePictures* pictures) {
+    if (!file || !file->fileRef || file->fileRef->isNull() || !pictures) return 0;
+    try {
+        return file->fileRef->setComplexProperties("PICTURE", pictures->pictures) ? 1 : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
+int taglib_bridge_pictures_size(TagLibBridgePictures* pictures) {
+    if (!pictures) return 0;
+    return static_cast<int>(pictures->cachedPictures.size());
+}
+
+uint32_t taglib_bridge_pictures_data_size(TagLibBridgePictures* pictures, int index) {
+    const auto* picture = picture_at(pictures, index);
+    if (!picture) return 0;
+    auto dataVar = (*picture)["data"];
+    if (dataVar.isEmpty()) return 0;
+    return static_cast<uint32_t>(dataVar.toByteVector().size());
+}
+
+int taglib_bridge_pictures_data(TagLibBridgePictures* pictures, int index, uint8_t* buffer, uint32_t buffer_size) {
+    if (!pictures || !buffer || buffer_size == 0) return 0;
+    const auto* picture = picture_at(pictures, index);
+    if (!picture) return 0;
+    auto dataVar = (*picture)["data"];
+    if (dataVar.isEmpty()) return 0;
+    auto byteVector = dataVar.toByteVector();
+    uint32_t toCopy = byteVector.size() < buffer_size ? byteVector.size() : buffer_size;
+    std::memcpy(buffer, byteVector.data(), toCopy);
+    return 1;
+}
+
+const char* taglib_bridge_pictures_mime_type(TagLibBridgePictures* pictures, int index) {
+    if (!pictures || index < 0 || index >= static_cast<int>(pictures->cachedMimeTypes.size())) return "";
+    return pictures->cachedMimeTypes[static_cast<size_t>(index)].c_str();
+}
+
+const char* taglib_bridge_pictures_description(TagLibBridgePictures* pictures, int index) {
+    if (!pictures || index < 0 || index >= static_cast<int>(pictures->cachedDescriptions.size())) return "";
+    return pictures->cachedDescriptions[static_cast<size_t>(index)].c_str();
+}
+
+const char* taglib_bridge_pictures_picture_type(TagLibBridgePictures* pictures, int index) {
+    if (!pictures || index < 0 || index >= static_cast<int>(pictures->cachedPictureTypes.size())) return "";
+    return pictures->cachedPictureTypes[static_cast<size_t>(index)].c_str();
+}
+
+void taglib_bridge_pictures_add(
+    TagLibBridgePictures* pictures,
+    const uint8_t* data,
+    uint32_t size,
+    const char* mime_type,
+    const char* picture_type,
+    const char* description
+) {
+    if (!pictures || !data || size == 0) return;
+    try {
+        pictures->pictures.append(
+            build_picture_map(data, size, mime_type, picture_type, description)
+        );
+        pictures->refreshCache();
+    } catch (...) {
     }
 }
 

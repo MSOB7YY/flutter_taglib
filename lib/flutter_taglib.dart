@@ -11,6 +11,21 @@ import 'flutter_taglib_bindings_generated.dart' as bindings;
 
 final Logger _logger = Logger('flutter_taglib');
 
+/// Embedded picture metadata in an audio file.
+class Picture {
+  const Picture({
+    required this.bytes,
+    required this.mimeType,
+    this.pictureType = 'Front Cover',
+    this.description,
+  });
+
+  final Uint8List bytes;
+  final String mimeType;
+  final String pictureType;
+  final String? description;
+}
+
 /// High-level API for reading and writing music metadata using TagLib.
 ///
 /// Under the hood, this uses Native Assets to compile and link TagLib natively.
@@ -126,8 +141,9 @@ class TagLibFile {
   }
 
   ffi.Pointer<bindings.TagLibBridgeFile> _handle;
+
   /// The filesystem path or content URI of the opened audio file.
-  final String path;
+  String path;
   bool _isClosed = false;
 
   TagLibFile._(this._handle, this.path);
@@ -177,6 +193,20 @@ class TagLibFile {
         return null;
       }
       targetPath = grantedUri;
+    }
+
+    if (Platform.isAndroid && targetPath.startsWith('content://')) {
+      final fd = await _openAndroidFileDescriptor(
+        targetPath,
+        mode: writeAccess ? 'rw' : 'r',
+      );
+      if (fd == null) {
+        _logger.warning(
+          'Failed to open Android file descriptor for $targetPath',
+        );
+        return null;
+      }
+      return TagLibFile.openFd(fd, path: targetPath);
     }
 
     final pathPtr = targetPath.toNativeUtf8();
@@ -230,22 +260,23 @@ class TagLibFile {
     final grantedUri = await TagLibFile.requestWritePermission(path);
     if (grantedUri == null) return false;
 
-    // Close current native handle
-    bindings.taglib_bridge_close(_handle);
-
-    // Open new native handle in read-write mode
-    final pathPtr = grantedUri.toNativeUtf8();
-    try {
-      final newHandle = bindings.taglib_bridge_open(pathPtr.cast<ffi.Char>());
-      if (newHandle == ffi.nullptr) {
-        _logger.severe('Failed to reopen path "$grantedUri" in write mode.');
-        return false;
-      }
-      _handle = newHandle;
-      return true;
-    } finally {
-      malloc.free(pathPtr);
+    TagLibFile? reopened;
+    if (grantedUri.startsWith('content://')) {
+      final fd = await _openAndroidFileDescriptor(grantedUri, mode: 'rw');
+      if (fd == null) return false;
+      reopened = TagLibFile.openFd(fd, path: path);
+    } else {
+      reopened = TagLibFile.open(grantedUri);
     }
+
+    if (reopened == null) {
+      return false;
+    }
+
+    bindings.taglib_bridge_close(_handle);
+    _handle = reopened._handle;
+    reopened._isClosed = true;
+    return true;
   }
 
   /// Saves any changes made to the file metadata.
@@ -442,29 +473,84 @@ class TagLibFile {
     return bindings.taglib_bridge_has_cover(_handle) == 1;
   }
 
+  /// Returns all embedded pictures in the file.
+  ///
+  /// The first picture is typically the front cover.
+  List<Picture> get pictures {
+    _checkClosed();
+    final picturesHandle = bindings.taglib_bridge_pictures_get(_handle);
+    if (picturesHandle == ffi.nullptr) return const <Picture>[];
+
+    final result = <Picture>[];
+    try {
+      final count = bindings.taglib_bridge_pictures_size(picturesHandle);
+      for (var index = 0; index < count; index++) {
+        final dataSize = bindings.taglib_bridge_pictures_data_size(
+          picturesHandle,
+          index,
+        );
+        if (dataSize == 0) {
+          continue;
+        }
+
+        final buffer = malloc<ffi.Uint8>(dataSize);
+        try {
+          final copied = bindings.taglib_bridge_pictures_data(
+            picturesHandle,
+            index,
+            buffer,
+            dataSize,
+          );
+          if (copied != 1) {
+            continue;
+          }
+
+          final bytes = Uint8List.fromList(buffer.asTypedList(dataSize));
+          final mimeType =
+              _pointerToString(
+                bindings.taglib_bridge_pictures_mime_type(
+                  picturesHandle,
+                  index,
+                ),
+              ) ??
+              'image/jpeg';
+          final pictureType =
+              _pointerToString(
+                bindings.taglib_bridge_pictures_picture_type(
+                  picturesHandle,
+                  index,
+                ),
+              ) ??
+              'Front Cover';
+          final description = _pointerToString(
+            bindings.taglib_bridge_pictures_description(picturesHandle, index),
+          );
+
+          result.add(
+            Picture(
+              bytes: bytes,
+              mimeType: mimeType,
+              pictureType: pictureType,
+              description: description,
+            ),
+          );
+        } finally {
+          malloc.free(buffer);
+        }
+      }
+    } finally {
+      bindings.taglib_bridge_pictures_free(picturesHandle);
+    }
+
+    return result;
+  }
+
   /// Retrieves the cover art image bytes as a [Uint8List].
   ///
   /// Returns `null` if the file has no cover art.
   Uint8List? get coverData {
     _checkClosed();
-    final size = bindings.taglib_bridge_get_cover_data_size(_handle);
-    if (size == 0) return null;
-
-    final buffer = malloc<ffi.Uint8>(size);
-    try {
-      final success = bindings.taglib_bridge_get_cover_data(
-        _handle,
-        buffer,
-        size,
-      );
-      if (success == 1) {
-        final list = buffer.asTypedList(size);
-        return Uint8List.fromList(list);
-      }
-      return null;
-    } finally {
-      malloc.free(buffer);
-    }
+    return pictures.isEmpty ? null : pictures.first.bytes;
   }
 
   /// Mime-type of the cover art (e.g. `image/jpeg` or `image/png`).
@@ -472,11 +558,50 @@ class TagLibFile {
   /// Returns `null` if the file has no cover art.
   String? get coverMimeType {
     _checkClosed();
-    if (!hasCover) return null;
-    final ptr = bindings.taglib_bridge_get_cover_mime_type(_handle);
-    if (ptr == ffi.nullptr) return null;
-    final str = ptr.cast<Utf8>().toDartString();
-    return str.isEmpty ? null : str;
+    if (pictures.isEmpty) return null;
+    final mime = pictures.first.mimeType.trim();
+    return mime.isEmpty ? null : mime;
+  }
+
+  /// Replaces all embedded pictures in the file.
+  ///
+  /// Pass an empty list to remove all pictures.
+  bool setPictures(List<Picture> pictures) {
+    _checkClosed();
+    final picturesHandle = bindings.taglib_bridge_pictures_create();
+    try {
+      for (final picture in pictures) {
+        if (picture.bytes.isEmpty) {
+          continue;
+        }
+
+        final mimePtr = picture.mimeType.toNativeUtf8();
+        final typePtr = picture.pictureType.toNativeUtf8();
+        final descPtr = picture.description?.toNativeUtf8();
+        final dataPtr = malloc<ffi.Uint8>(picture.bytes.length);
+        try {
+          final list = dataPtr.asTypedList(picture.bytes.length);
+          list.setAll(0, picture.bytes);
+          bindings.taglib_bridge_pictures_add(
+            picturesHandle,
+            dataPtr,
+            picture.bytes.length,
+            mimePtr.cast<ffi.Char>(),
+            typePtr.cast<ffi.Char>(),
+            descPtr == null ? ffi.nullptr : descPtr.cast<ffi.Char>(),
+          );
+        } finally {
+          malloc.free(mimePtr);
+          malloc.free(typePtr);
+          if (descPtr != null) malloc.free(descPtr);
+          malloc.free(dataPtr);
+        }
+      }
+
+      return bindings.taglib_bridge_pictures_set(_handle, picturesHandle) == 1;
+    } finally {
+      bindings.taglib_bridge_pictures_free(picturesHandle);
+    }
   }
 
   /// Sets or updates the cover art of the file.
@@ -488,31 +613,10 @@ class TagLibFile {
   bool setCover({required Uint8List? data, String mimeType = 'image/jpeg'}) {
     _checkClosed();
     if (data == null || data.isEmpty) {
-      return bindings.taglib_bridge_set_cover(
-            _handle,
-            ffi.nullptr,
-            ffi.nullptr,
-            0,
-          ) ==
-          1;
+      return setPictures(const <Picture>[]);
     }
 
-    final mimePtr = mimeType.toNativeUtf8();
-    final dataPtr = malloc<ffi.Uint8>(data.length);
-    try {
-      final list = dataPtr.asTypedList(data.length);
-      list.setAll(0, data);
-      return bindings.taglib_bridge_set_cover(
-            _handle,
-            mimePtr.cast<ffi.Char>(),
-            dataPtr,
-            data.length,
-          ) ==
-          1;
-    } finally {
-      malloc.free(mimePtr);
-      malloc.free(dataPtr);
-    }
+    return setPictures([Picture(bytes: data, mimeType: mimeType)]);
   }
 
   /// (iOS only) Lets the user pick an audio file for editing.
@@ -545,6 +649,28 @@ class TagLibFile {
       originalPath: originalPath,
       name: result['name'],
     );
+  }
+
+  static String? _pointerToString(ffi.Pointer<ffi.Char> ptr) {
+    if (ptr == ffi.nullptr) return null;
+    final text = ptr.cast<Utf8>().toDartString().trim();
+    return text.isEmpty ? null : text;
+  }
+
+  static Future<int?> _openAndroidFileDescriptor(
+    String uri, {
+    String mode = 'r',
+  }) async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<int>('openFileDescriptor', {
+        'uri': uri,
+        'mode': mode,
+      });
+    } catch (e) {
+      _logger.warning('openFileDescriptor failed: $e');
+      return null;
+    }
   }
 
   /// (iOS only) Lets the user pick a directory and returns a handle that can
@@ -599,11 +725,18 @@ class TagLibFile {
         final keyPtr = bindings.taglib_bridge_properties_key(propsHandle, i);
         if (keyPtr == ffi.nullptr) continue;
         final key = keyPtr.cast<Utf8>().toDartString();
-        
-        final valCount = bindings.taglib_bridge_properties_value_count(propsHandle, keyPtr);
+
+        final valCount = bindings.taglib_bridge_properties_value_count(
+          propsHandle,
+          keyPtr,
+        );
         final valList = <String>[];
         for (var j = 0; j < valCount; j++) {
-          final valPtr = bindings.taglib_bridge_properties_value(propsHandle, keyPtr, j);
+          final valPtr = bindings.taglib_bridge_properties_value(
+            propsHandle,
+            keyPtr,
+            j,
+          );
           if (valPtr == ffi.nullptr) continue;
           valList.add(valPtr.cast<Utf8>().toDartString());
         }
@@ -617,11 +750,13 @@ class TagLibFile {
 
   /// Sets/updates properties of the file in memory.
   /// Call [save] afterwards to commit these changes to disk.
-  /// 
+  ///
   /// Returns a map of properties that were not supported by the file format and could not be set.
-  Map<String, List<String>> setProperties(Map<String, List<String>> propertiesMap) {
+  Map<String, List<String>> setProperties(
+    Map<String, List<String>> propertiesMap,
+  ) {
     _checkClosed();
-    
+
     final propsHandle = bindings.taglib_bridge_properties_create();
     try {
       propertiesMap.forEach((key, values) {
@@ -644,21 +779,34 @@ class TagLibFile {
         }
       });
 
-      final unsupportedHandle = bindings.taglib_bridge_properties_set(_handle, propsHandle);
+      final unsupportedHandle = bindings.taglib_bridge_properties_set(
+        _handle,
+        propsHandle,
+      );
       if (unsupportedHandle == ffi.nullptr) return {};
 
       final unsupportedResult = <String, List<String>>{};
       try {
         final size = bindings.taglib_bridge_properties_size(unsupportedHandle);
         for (var i = 0; i < size; i++) {
-          final keyPtr = bindings.taglib_bridge_properties_key(unsupportedHandle, i);
+          final keyPtr = bindings.taglib_bridge_properties_key(
+            unsupportedHandle,
+            i,
+          );
           if (keyPtr == ffi.nullptr) continue;
           final key = keyPtr.cast<Utf8>().toDartString();
-          
-          final valCount = bindings.taglib_bridge_properties_value_count(unsupportedHandle, keyPtr);
+
+          final valCount = bindings.taglib_bridge_properties_value_count(
+            unsupportedHandle,
+            keyPtr,
+          );
           final valList = <String>[];
           for (var j = 0; j < valCount; j++) {
-            final valPtr = bindings.taglib_bridge_properties_value(unsupportedHandle, keyPtr, j);
+            final valPtr = bindings.taglib_bridge_properties_value(
+              unsupportedHandle,
+              keyPtr,
+              j,
+            );
             if (valPtr == ffi.nullptr) continue;
             valList.add(valPtr.cast<Utf8>().toDartString());
           }
@@ -769,7 +917,7 @@ class FlutterTaglib {
 
 /// Commonly used standard property key constants in the TagLib properties dictionary.
 /// Used with [TagLibFile.properties] and [TagLibFile.setProperties].
-/// 
+///
 /// Although using these predefined constants is recommended for IDE autocomplete support,
 /// you can still use any custom string as a property key.
 abstract final class TagProperties {

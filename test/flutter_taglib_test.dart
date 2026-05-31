@@ -217,6 +217,47 @@ void main() {
       file3.close();
     });
 
+    test('Write and read back multiple embedded pictures', () {
+      final tempMultiPic = File('${tempDir.path}/temp_multi_pic.mp3');
+      File('test/assets/01 TempleOS Hymn Risen (Remix).mp3').copySync(
+        tempMultiPic.path,
+      );
+
+      final file = TagLibFile.open(tempMultiPic.path);
+      expect(file, isNotNull);
+      if (file != null) {
+        final coverBytes = File('test/assets/cover.jpg').readAsBytesSync();
+        final saved = file.setPictures([
+          Picture(
+            bytes: coverBytes,
+            mimeType: 'image/jpeg',
+            pictureType: 'Front Cover',
+            description: 'front',
+          ),
+          Picture(
+            bytes: coverBytes,
+            mimeType: 'image/jpeg',
+            pictureType: 'Back Cover',
+            description: 'back',
+          ),
+        ]);
+        expect(saved, isTrue);
+        expect(file.save(), isTrue);
+        file.close();
+
+        final file2 = TagLibFile.open(tempMultiPic.path);
+        expect(file2, isNotNull);
+        if (file2 != null) {
+          expect(file2.pictures.length, equals(2));
+          expect(file2.pictures.first.pictureType, equals('Front Cover'));
+          expect(file2.pictures.first.description, equals('front'));
+          expect(file2.pictures.last.pictureType, equals('Back Cover'));
+          expect(file2.pictures.last.description, equals('back'));
+          file2.close();
+        }
+      }
+    });
+
     test('Write and read back metadata fields for APE', () {
       final tempApe = File('${tempDir.path}/temp_test.ape');
       File('test/assets/01 TempleOS Hymn Risen (Remix).ape').copySync(tempApe.path);
