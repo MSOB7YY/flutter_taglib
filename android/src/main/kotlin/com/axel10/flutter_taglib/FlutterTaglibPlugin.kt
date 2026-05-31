@@ -86,21 +86,13 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
 
         val originalUri = Uri.parse(uriStr)
         Log.d(TAG, "handleRequestWritePermission: originalUri=$originalUri, authority=${originalUri.authority}")
-        val targetUri = resolveToMediaStoreUri(safeContext, originalUri) ?: originalUri
-        val targetUriStr = targetUri.toString()
-        Log.d(TAG, "handleRequestWritePermission: resolved targetUri=$targetUriStr")
-
-        if (!targetUriStr.startsWith("content://")) {
-            // Normal files
+        if (!originalUri.toString().startsWith("content://")) {
+            val filePath = originalUri.toString()
             try {
-                val file = java.io.File(targetUriStr)
+                val file = java.io.File(filePath)
                 val writable = file.exists() && file.canWrite()
-                Log.d(TAG, "handleRequestWritePermission: local file path=$targetUriStr, writable=$writable")
-                if (writable) {
-                    result.success(targetUriStr)
-                } else {
-                    result.success(null)
-                }
+                Log.d(TAG, "handleRequestWritePermission: local file path=$filePath, writable=$writable")
+                result.success(if (writable) filePath else null)
             } catch (e: Exception) {
                 Log.e(TAG, "handleRequestWritePermission: failed checking local file: ${e.message}")
                 result.success(null)
@@ -108,7 +100,44 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
             return
         }
 
-        // First try to check uri permission directly
+        // Prefer the already granted tree/document permission. This is the path
+        // we want for SAF-selected output directories so we do not trigger a
+        // per-file confirmation flow when writing many files in the same folder.
+        try {
+            safeContext.contentResolver.openFileDescriptor(originalUri, "rw")?.use {
+                Log.d(TAG, "handleRequestWritePermission: direct rw open succeeded for $originalUri")
+                result.success(originalUri.toString())
+                return
+            }
+        } catch (e: android.app.RecoverableSecurityException) {
+            Log.w(
+                TAG,
+                "handleRequestWritePermission: direct rw open hit RecoverableSecurityException for $originalUri: ${e.message}",
+            )
+        } catch (e: SecurityException) {
+            Log.w(TAG, "handleRequestWritePermission: direct rw open denied for $originalUri: ${e.message}")
+        } catch (e: Exception) {
+            Log.w(TAG, "handleRequestWritePermission: direct rw open failed for $originalUri: ${e.message}")
+        }
+
+        // SAF tree URIs are expected to be writable through the selected folder's
+        // persisted permission. If the direct open failed, do not escalate to a
+        // per-file write request and instead return null so the caller can fail
+        // fast rather than showing a confirmation dialog for each file.
+        if (originalUri.authority == "com.android.externalstorage.documents") {
+            Log.w(
+                TAG,
+                "handleRequestWritePermission: refusing per-file write request for SAF tree uri=$originalUri",
+            )
+            result.success(null)
+            return
+        }
+
+        val targetUri = resolveToMediaStoreUri(safeContext, originalUri) ?: originalUri
+        val targetUriStr = targetUri.toString()
+        Log.d(TAG, "handleRequestWritePermission: resolved targetUri=$targetUriStr")
+
+        // First try to check uri permission directly.
         if (checkUriPermission(targetUri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) {
             Log.d(TAG, "handleRequestWritePermission: Already has write permission for $targetUriStr")
             result.success(targetUriStr)

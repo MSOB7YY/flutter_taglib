@@ -26,7 +26,8 @@ A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart F
   - Get a structured `AudioInfo` object containing all detailed audio properties.
 - **Scoped Storage & SAF Support (Android)**:
   - Open files using Unix File Descriptors (`openFd`) to bypass Scoped Storage restrictions.
-  - Automatically request write permissions using `openAsync` or `requestWriteAccess()`.
+  - Reuse persisted SAF tree permissions when a file lives under a selected output directory, so batch writes can stay inside one folder grant instead of prompting per file.
+  - Automatically request write permissions using `openAsync` or `requestWriteAccess()` when a direct writable descriptor is not already available.
 - **Selectable Platform Support**: Avoid compilation conflicts by selectively enabling or disabling platform builds using a simple YAML configuration file.
 
 ---
@@ -106,7 +107,7 @@ void readMetadata(String filePath) {
 To update metadata, modify the fields and call `save()`.
 
 > [!IMPORTANT]
-> On Android, modifying files in Scoped Storage may require write permission. You must request write access before making changes.
+> On Android, modifying files in Scoped Storage may require write permission. If you pick an output directory through SAF, the persisted tree permission is typically enough for files created inside that directory, so batch metadata writes should avoid per-file prompts.
 
 ```dart
 import 'package:flutter_taglib/flutter_taglib.dart';
@@ -277,6 +278,25 @@ if (restored != null) {
 ### 5. Android Scoped Storage & File Descriptors
 
 Android 10+ enforces Scoped Storage. Directly opening a filepath (like `/storage/emulated/0/...`) in C++ write mode will fail unless permissions are handled. `flutter_taglib` offers two ways to handle this:
+
+If you use `file_picker` on Android to choose a target file for writing, use
+`PlatformFile.identifier` as the write path. In many cases `file.path` is only
+a local filesystem path without write permission, while `identifier` preserves
+the `content://` URI that can actually be granted write access.
+
+```dart
+final result = await FilePicker.pickFiles(type: FileType.audio);
+if (result != null && result.files.isNotEmpty) {
+  final file = result.files.single;
+  final writePath = file.identifier;
+  if (writePath == null || writePath.isEmpty) {
+    throw StateError('Android write access requires a file identifier.');
+  }
+
+  final tagFile = await TagLibFile.openAsync(writePath, writeAccess: true);
+  // ...
+}
+```
 
 #### Option A: Automatic Permission Requests (`openAsync` & `requestWriteAccess`)
 Use `openAsync` with `writeAccess: true` to trigger the system prompt when necessary. If you already have a `TagLibFile` open in read-only mode, you can request write access before saving:

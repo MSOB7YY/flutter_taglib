@@ -120,8 +120,10 @@ class TagLibFile {
   /// Requests write permission for the given URI on Android.
   ///
   /// For Scoped Storage (Android 10+), modifying files from public directories
-  /// requires user approval. This method triggers the Android system permission request dialog
-  /// and returns the URI that has write permission granted, or `null` if permission was denied.
+  /// may require user approval. This method first tries to reuse any existing
+  /// writable access, including SAF tree permissions for files inside a picked
+  /// directory, and only falls back to a system permission request when needed.
+  /// It returns the URI that has write permission granted, or `null` if permission was denied.
   /// On other platforms, it immediately returns the original URI.
   static Future<String?> requestWritePermission(String uri) async {
     if (!Platform.isAndroid) return uri;
