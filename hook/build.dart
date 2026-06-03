@@ -10,9 +10,15 @@ void main(List<String> args) async {
       return;
     }
 
-    final targetOSStr = input.config.code.targetOS.toString().split('.').last.toLowerCase();
+    final targetOSStr = input.config.code.targetOS
+        .toString()
+        .split('.')
+        .last
+        .toLowerCase();
     if (!_isPlatformEnabled(targetOSStr)) {
-      print('flutter_taglib: Building for $targetOSStr is disabled via flutter_taglib.yaml. Skipping compilation.');
+      print(
+        'flutter_taglib: Building for $targetOSStr is disabled via flutter_taglib.yaml. Skipping compilation.',
+      );
       return;
     }
 
@@ -24,22 +30,31 @@ void main(List<String> args) async {
     final utfcppVersion = '4.0.9';
 
     final cacheDir = Directory('.dart_tool/flutter_taglib');
-    final taglibExtractedDir = Directory('${cacheDir.path}/taglib-$taglibVersion');
-    final targetUtfcppDir = Directory('${taglibExtractedDir.path}/3rdparty/utfcpp');
+    final taglibExtractedDir = Directory(
+      '${cacheDir.path}/taglib-$taglibVersion',
+    );
+    final targetUtfcppDir = Directory(
+      '${taglibExtractedDir.path}/3rdparty/utfcpp',
+    );
 
-    if (!taglibExtractedDir.existsSync() || !File('${targetUtfcppDir.path}/source/utf8.h').existsSync()) {
-      print('flutter_taglib: TagLib 2.3 or utfcpp missing in cache. Downloading sources...');
+    if (!taglibExtractedDir.existsSync() ||
+        !File('${targetUtfcppDir.path}/source/utf8.h').existsSync()) {
+      print(
+        'flutter_taglib: TagLib 2.3 or utfcpp missing in cache. Downloading sources...',
+      );
       cacheDir.createSync(recursive: true);
 
       // 1. Download TagLib 2.3
       final taglibZip = File('${cacheDir.path}/taglib.zip');
-      final taglibUrl = 'https://github.com/taglib/taglib/archive/refs/tags/v$taglibVersion.zip';
+      final taglibUrl =
+          'https://github.com/taglib/taglib/archive/refs/tags/v$taglibVersion.zip';
       print('Downloading TagLib from $taglibUrl...');
       await _downloadFile(taglibUrl, taglibZip);
 
       // 2. Download utfcpp
       final utfcppZip = File('${cacheDir.path}/utfcpp.zip');
-      final utfcppUrl = 'https://github.com/nemtrif/utfcpp/archive/refs/tags/v$utfcppVersion.zip';
+      final utfcppUrl =
+          'https://github.com/nemtrif/utfcpp/archive/refs/tags/v$utfcppVersion.zip';
       print('Downloading utfcpp from $utfcppUrl...');
       await _downloadFile(utfcppUrl, utfcppZip);
 
@@ -58,7 +73,9 @@ void main(List<String> args) async {
       }
       targetUtfcppDir.createSync(recursive: true);
 
-      final utfcppExtractedDir = Directory('${cacheDir.path}/utfcpp-$utfcppVersion');
+      final utfcppExtractedDir = Directory(
+        '${cacheDir.path}/utfcpp-$utfcppVersion',
+      );
       if (utfcppExtractedDir.existsSync()) {
         await _moveDirectory(utfcppExtractedDir, targetUtfcppDir);
         utfcppExtractedDir.deleteSync(recursive: true);
@@ -70,9 +87,7 @@ void main(List<String> args) async {
       print('flutter_taglib: Online sources fetched successfully.');
     }
 
-    final sources = <String>[
-      'src/flutter_taglib.cpp',
-    ];
+    final sources = <String>['src/flutter_taglib.cpp'];
 
     final includes = <String>[
       'src',
@@ -81,8 +96,10 @@ void main(List<String> args) async {
       '${taglibExtractedDir.path}/3rdparty/utfcpp/source',
     ];
 
-    // Find all .cpp files in taglib/taglib recursively and group them by subdirectory
-    // Also find all subdirectories in taglib/taglib and add to includes
+    // Find all .cpp files in taglib/taglib recursively and group them by
+    // subdirectory. We intentionally keep the include list short on Windows
+    // because adding every subdirectory can push cl.exe over the command line
+    // limit in CI.
     final taglibSubDir = Directory('${taglibExtractedDir.path}/taglib');
     final List<String> taglibLibraries = [];
 
@@ -93,16 +110,15 @@ void main(List<String> args) async {
           if (entity is File && entity.path.endsWith('.cpp')) {
             final parentDir = entity.parent.path;
             dirToCppFiles.putIfAbsent(parentDir, () => []).add(entity.path);
-          } else if (entity is Directory) {
-            includes.add(entity.path);
           }
         }
       }
 
-      // Compile each directory's C++ files into its own static library
+      // Compile each directory's C++ files into small static libraries so the
+      // generated cl.exe command line stays below Windows limits.
       for (final entry in dirToCppFiles.entries) {
         final dirPath = entry.key;
-        final cppFiles = entry.value;
+        final cppFiles = [...entry.value]..sort();
 
         final normalizedPath = dirPath.replaceAll('\\', '/');
         final pathParts = normalizedPath.split('/');
@@ -117,43 +133,43 @@ void main(List<String> args) async {
           suffix = 'root';
         }
 
-        final libName = 'taglib_$suffix';
-        taglibLibraries.add(libName);
+        final batches = _chunkFiles(cppFiles, 4);
+        for (var index = 0; index < batches.length; index++) {
+          final libName = 'taglib_${suffix}_$index';
+          taglibLibraries.add(libName);
 
-        // Clean up any existing .obj files in the output directory
-        // to prevent them from being packaged into the static library
-        final outDirFile = Directory(input.outputDirectory.toFilePath());
-        if (outDirFile.existsSync()) {
-          for (final file in outDirFile.listSync()) {
-            if (file is File && file.path.endsWith('.obj')) {
-              try {
-                file.deleteSync();
-              } catch (_) {}
+          // Clean up any existing .obj files in the output directory
+          // to prevent them from being packaged into the static library.
+          final outDirFile = Directory(input.outputDirectory.toFilePath());
+          if (outDirFile.existsSync()) {
+            for (final file in outDirFile.listSync()) {
+              if (file is File && file.path.endsWith('.obj')) {
+                try {
+                  file.deleteSync();
+                } catch (_) {}
+              }
             }
           }
+
+          final staticBuilder = CBuilder.library(
+            name: libName,
+            assetName: null, // Do not expose as native asset to Flutter
+            sources: batches[index],
+            includes: includes,
+            defines: {'HAVE_CONFIG_H': '1', 'TAGLIB_STATIC': '1'},
+            std: 'c++17',
+            language: Language.cpp,
+            linkModePreference: LinkModePreference.static,
+          );
+
+          await staticBuilder.run(
+            input: input,
+            output: output,
+            logger: Logger('')
+              ..level = Level.ALL
+              ..onRecord.listen((record) => print(record.message)),
+          );
         }
-
-        final staticBuilder = CBuilder.library(
-          name: libName,
-          assetName: null, // Do not expose as native asset to Flutter
-          sources: cppFiles,
-          includes: includes,
-          defines: {
-            'HAVE_CONFIG_H': '1',
-            'TAGLIB_STATIC': '1',
-          },
-          std: 'c++17',
-          language: Language.cpp,
-          linkModePreference: LinkModePreference.static,
-        );
-
-        await staticBuilder.run(
-          input: input,
-          output: output,
-          logger: Logger('')
-            ..level = Level.ALL
-            ..onRecord.listen((record) => print(record.message)),
-        );
       }
     } else {
       // For other platforms, compile all .cpp files directly
@@ -161,8 +177,6 @@ void main(List<String> args) async {
         for (final entity in taglibSubDir.listSync(recursive: true)) {
           if (entity is File && entity.path.endsWith('.cpp')) {
             sources.add(entity.path);
-          } else if (entity is Directory) {
-            includes.add(entity.path);
           }
         }
       }
@@ -176,13 +190,12 @@ void main(List<String> args) async {
       assetName: '${packageName}_bindings_generated.dart',
       sources: sources,
       includes: includes,
-      defines: {
-        'HAVE_CONFIG_H': '1',
-        'TAGLIB_STATIC': '1',
-      },
+      defines: {'HAVE_CONFIG_H': '1', 'TAGLIB_STATIC': '1'},
       std: 'c++17',
       language: Language.cpp,
-      cppLinkStdLib: input.config.code.targetOS.toString().contains('android') ? 'c++_static' : null,
+      cppLinkStdLib: input.config.code.targetOS.toString().contains('android')
+          ? 'c++_static'
+          : null,
       flags: [
         if (!input.config.code.targetOS.toString().contains('windows'))
           '-fvisibility=hidden',
@@ -192,12 +205,9 @@ void main(List<String> args) async {
         if (input.config.code.targetOS.toString().contains('android') ||
             input.config.code.targetOS.toString().contains('linux'))
           'm',
-        if (input.config.code.targetOS.toString().contains('android'))
-          'log',
+        if (input.config.code.targetOS.toString().contains('android')) 'log',
       ],
-      libraryDirectories: [
-        if (targetOSStr == 'windows') '.',
-      ],
+      libraryDirectories: [if (targetOSStr == 'windows') '.'],
     );
 
     await cbuilder.run(
@@ -228,9 +238,20 @@ Future<void> _downloadFile(String url, File targetFile) async {
 Future<void> _extractZip(File zipFile, Directory destDir) async {
   ProcessResult result;
   if (Platform.isWindows) {
-    result = await Process.run('tar', ['-xf', zipFile.path, '-C', destDir.path]);
+    result = await Process.run('tar', [
+      '-xf',
+      zipFile.path,
+      '-C',
+      destDir.path,
+    ]);
   } else {
-    result = await Process.run('unzip', ['-o', '-q', zipFile.path, '-d', destDir.path]);
+    result = await Process.run('unzip', [
+      '-o',
+      '-q',
+      zipFile.path,
+      '-d',
+      destDir.path,
+    ]);
   }
   if (result.exitCode != 0) {
     throw Exception('Failed to extract ${zipFile.path}: ${result.stderr}');
@@ -250,6 +271,17 @@ Future<void> _moveDirectory(Directory source, Directory destination) async {
   }
 }
 
+List<List<String>> _chunkFiles(List<String> files, int chunkSize) {
+  final chunks = <List<String>>[];
+  for (var start = 0; start < files.length; start += chunkSize) {
+    final end = start + chunkSize > files.length
+        ? files.length
+        : start + chunkSize;
+    chunks.add(files.sublist(start, end));
+  }
+  return chunks;
+}
+
 bool _isPlatformEnabled(String targetOS) {
   // Check for configuration file in current directory or parent directory
   File? configFile;
@@ -257,8 +289,11 @@ bool _isPlatformEnabled(String targetOS) {
     Directory.current.uri.resolve('flutter_taglib.yaml').toFilePath(),
     if (Directory.current.parent.existsSync())
       Directory.current.parent.uri.resolve('flutter_taglib.yaml').toFilePath(),
-    if (Directory.current.parent.existsSync() && Directory.current.parent.parent.existsSync())
-      Directory.current.parent.parent.uri.resolve('flutter_taglib.yaml').toFilePath(),
+    if (Directory.current.parent.existsSync() &&
+        Directory.current.parent.parent.existsSync())
+      Directory.current.parent.parent.uri
+          .resolve('flutter_taglib.yaml')
+          .toFilePath(),
   ];
 
   for (final path in pathsToCheck) {
@@ -302,7 +337,9 @@ bool _isPlatformEnabled(String targetOS) {
       }
     }
   } catch (e) {
-    print('flutter_taglib hook/build.dart: error reading/parsing flutter_taglib.yaml: $e');
+    print(
+      'flutter_taglib hook/build.dart: error reading/parsing flutter_taglib.yaml: $e',
+    );
   }
 
   return true; // Default to enabled on error or if not found in config
