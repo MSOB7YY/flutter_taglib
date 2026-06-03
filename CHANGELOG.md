@@ -1,3 +1,6 @@
+## 1.2.0
+* Supports Android content://media format links
+
 ## 1.1.1
 * Update document
 
