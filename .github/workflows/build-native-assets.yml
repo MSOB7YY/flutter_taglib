@@ -82,18 +82,42 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          $file = Get-ChildItem -Path example/build -Recurse -Filter "${{ matrix.search-pattern }}" | Select-Object -First 1
+          $file = Get-ChildItem -Path example/build/windows/x64/runner/Release -Recurse -Filter "${{ matrix.search-pattern }}" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $file) {
+            $file = Get-ChildItem -Path example/build/windows/x64 -Recurse -Filter "${{ matrix.search-pattern }}" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $file) {
+            $file = Get-ChildItem -Path example/build/windows/x64 -Recurse -Include "*taglib*.dll" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
           if (-not $file) { throw "Could not find ${{ matrix.search-pattern }}" }
           Copy-Item $file.FullName "dist/${{ matrix.output-name }}"
+
+      - name: Debug Windows outputs
+        if: runner.os == 'Windows' && failure()
+        shell: pwsh
+        run: |
+          Write-Host "Listing candidate Windows outputs:"
+          if (Test-Path example/build/windows/x64) {
+            Get-ChildItem -Path example/build/windows/x64 -Recurse -Include *.dll -File -ErrorAction SilentlyContinue |
+              Sort-Object FullName |
+              ForEach-Object { $_.FullName }
+          } else {
+            Write-Host "example/build/windows/x64 does not exist"
+          }
 
       - name: Collect Linux asset
         if: runner.os == 'Linux'
         shell: bash
         run: |
           mkdir -p dist
-          file_path="$(find example/build -name '${{ matrix.search-pattern }}' | head -n 1)"
+          file_path="$(find example/build/linux/x64/release/bundle/lib -name '${{ matrix.search-pattern }}' | head -n 1)"
+          if [ -z "$file_path" ]; then
+            file_path="$(find example/build/linux/x64/release -path '*native_assets*' -name '${{ matrix.search-pattern }}' | head -n 1)"
+          fi
           if [ -z "$file_path" ]; then
             echo "Could not find ${{ matrix.search-pattern }}"
+            echo "Listing candidate Linux outputs:"
+            find example/build/linux/x64/release -maxdepth 8 \( -name '*.so' -o -path '*native_assets*' \) | sort
             exit 1
           fi
           cp "$file_path" "dist/${{ matrix.output-name }}"
