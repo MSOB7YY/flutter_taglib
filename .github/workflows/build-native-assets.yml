@@ -2,11 +2,30 @@ name: Build Desktop Native Assets
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Release version used in artifact names and optional release tag
+        required: true
+        default: 1.2.0
+        type: string
+      publish_release:
+        description: Publish assets to a GitHub Release
+        required: true
+        default: false
+        type: boolean
   push:
     branches:
       - main
     tags:
       - desktop-binaries-v*
+
+run-name: >-
+  Build desktop native assets
+  ${{
+    github.event_name == 'workflow_dispatch'
+      && format('(version {0})', inputs.version)
+      || ''
+  }}
 
 jobs:
   build-desktop:
@@ -29,6 +48,7 @@ jobs:
 
     env:
       FLUTTER_TAGLIB_BUILD_DESKTOP_FROM_SOURCE: "true"
+      FLUTTER_TAGLIB_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -81,13 +101,13 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}
+          name: ${{ matrix.platform }}${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}
           path: dist/${{ matrix.output-name }}
 
   publish-release:
     name: Publish Release Assets
     needs: build-desktop
-    if: startsWith(github.ref, 'refs/tags/desktop-binaries-v')
+    if: startsWith(github.ref, 'refs/tags/desktop-binaries-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     runs-on: ubuntu-latest
 
     steps:
@@ -96,9 +116,24 @@ jobs:
         with:
           path: dist
 
+      - name: Determine release tag
+        id: release_tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=desktop-binaries-v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: ${{ steps.release_tag.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
           files: |
-            dist/windows-x64/flutter_taglib_windows_x64.dll
-            dist/linux-x64/libflutter_taglib_linux_x64.so
+            dist/windows-x64${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}/flutter_taglib_windows_x64.dll
+            dist/linux-x64${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}/libflutter_taglib_linux_x64.so
