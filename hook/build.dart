@@ -272,9 +272,12 @@ void _prepareFlattenedWindowsHeaders({
   flattenedIncludeDir.createSync(recursive: true);
 
   final seenHeaderNames = <String, String>{};
+  const allowedExtensions = <String>{'.h', '.hpp', '.tcc', '.inl', '.inc'};
+
   for (final entity in taglibRoot.listSync(recursive: true)) {
     if (entity is! File) continue;
-    if (!entity.path.endsWith('.h') && !entity.path.endsWith('.hpp')) continue;
+    final extension = _extensionOf(entity.path).toLowerCase();
+    if (!allowedExtensions.contains(extension)) continue;
 
     final headerName = entity.uri.pathSegments.last;
     final existingPath = seenHeaderNames[headerName];
@@ -289,6 +292,18 @@ void _prepareFlattenedWindowsHeaders({
     final targetFile = File('${flattenedIncludeDir.path}/$headerName');
     entity.copySync(targetFile.path);
   }
+}
+
+String _extensionOf(String filePath) {
+  final slashIndex = filePath.lastIndexOf(RegExp(r'[\\/]'));
+  final fileName = slashIndex == -1
+      ? filePath
+      : filePath.substring(slashIndex + 1);
+  final dotIndex = fileName.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex == fileName.length - 1) {
+    return '';
+  }
+  return fileName.substring(dotIndex);
 }
 
 bool _shouldBuildDesktopFromSource() {
