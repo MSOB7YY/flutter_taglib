@@ -1,0 +1,104 @@
+name: Build Desktop Native Assets
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - desktop-binaries-v*
+
+jobs:
+  build-desktop:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            os: windows-latest
+            flutter-build-command: flutter build windows --release
+            output-name: flutter_taglib_windows_x64.dll
+            search-pattern: flutter_taglib_native.dll
+          - platform: linux-x64
+            os: ubuntu-latest
+            flutter-build-command: flutter build linux --release
+            output-name: libflutter_taglib_linux_x64.so
+            search-pattern: libflutter_taglib_native.so
+
+    env:
+      FLUTTER_TAGLIB_BUILD_DESKTOP_FROM_SOURCE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev unzip
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build desktop example
+        working-directory: example
+        run: ${{ matrix.flutter-build-command }}
+
+      - name: Collect Windows asset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $file = Get-ChildItem -Path example/build -Recurse -Filter "${{ matrix.search-pattern }}" | Select-Object -First 1
+          if (-not $file) { throw "Could not find ${{ matrix.search-pattern }}" }
+          Copy-Item $file.FullName "dist/${{ matrix.output-name }}"
+
+      - name: Collect Linux asset
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p dist
+          file_path="$(find example/build -name '${{ matrix.search-pattern }}' | head -n 1)"
+          if [ -z "$file_path" ]; then
+            echo "Could not find ${{ matrix.search-pattern }}"
+            exit 1
+          fi
+          cp "$file_path" "dist/${{ matrix.output-name }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/${{ matrix.output-name }}
+
+  publish-release:
+    name: Publish Release Assets
+    needs: build-desktop
+    if: startsWith(github.ref, 'refs/tags/desktop-binaries-v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/windows-x64/flutter_taglib_windows_x64.dll
+            dist/linux-x64/libflutter_taglib_linux_x64.so

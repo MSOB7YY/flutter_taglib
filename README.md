@@ -6,7 +6,9 @@
 A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart FFI and Native Assets. It allows you to read and write audio metadata (including album cover art) and extract technical audio properties across various platforms.
 
 > [!NOTE]
-> This package uses Flutter's modern **Native Assets** feature. The native TagLib C++ code is compiled directly during your application build process, ensuring seamless compilation and optimization without requiring precompiled binaries.
+> This package uses a hybrid strategy:
+> - **Android/iOS/macOS** keep using Flutter **Native Assets** / native platform builds.
+> - **Windows/Linux** use prebuilt desktop binaries that are downloaded on demand and cached locally, so host apps do not need to compile TagLib during every build.
 
 ---
 
@@ -48,6 +50,26 @@ dependency during development:
 dependencies:
   flutter_taglib:
     path: /path/to/flutter_taglib
+```
+
+### Desktop Binary Preparation
+
+On **Windows** and **Linux**, call `prepareDesktopLibrary()` before your first
+desktop use, or just use `openAsync(...)`, which prepares the binary
+automatically:
+
+```dart
+await TagLibFile.prepareDesktopLibrary();
+final file = await TagLibFile.openAsync(filePath);
+```
+
+If you publish your own prebuilt binaries, point the plugin at your release
+endpoint before first use:
+
+```dart
+TagLibFile.configureDesktopBinarySource(
+  baseUrl: 'https://github.com/your-org/flutter_taglib/releases/download/desktop-binaries-v1.2.0',
+);
 ```
 
 ---
@@ -423,24 +445,13 @@ platforms:
 
 ## Native Assets Compilation Requirements
 
-Because this plugin compiles TagLib from source using Native Assets:
+Because mobile and Apple platforms still compile TagLib natively:
 - **Android**: Requires NDK configured in your local environment.
 - **iOS/macOS**: Requires Xcode.
-- **Windows**: Requires Visual Studio with C++ build tools.
-- **Linux**: Requires build tools and development libraries.
-  On Debian/Ubuntu, install the required packages with:
-  ```bash
-  sudo apt update
-  sudo apt install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
-  ```
-  To run or build the application:
-  ```bash
-  # Run in development mode
-  flutter run -d linux
 
-  # Build release version
-  flutter build linux
-  ```
+For **Windows/Linux app builds**, the plugin downloads prebuilt desktop
+libraries instead of compiling TagLib locally. Repository maintainers can
+refresh those binaries through `.github/workflows/build-native-assets.yml`.
 
 ---
 

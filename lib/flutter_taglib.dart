@@ -7,7 +7,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:logging/logging.dart';
-import 'flutter_taglib_bindings_generated.dart' as bindings;
+import 'src/flutter_taglib_bindings.dart' as bindings;
 
 final Logger _logger = Logger('flutter_taglib');
 
@@ -59,6 +59,21 @@ class TagLibFile {
     _lastSupportProbeStackTrace = null;
   }
 
+  /// Overrides the desktop binary download source used on Windows and Linux.
+  ///
+  /// Call this before [prepareDesktopLibrary], [openAsync], or [isSupported].
+  static void configureDesktopBinarySource({String? baseUrl, String? version}) {
+    bindings.configureDesktopBinarySource(baseUrl: baseUrl, version: version);
+    resetSupportCache();
+  }
+
+  /// Downloads and loads the prebuilt desktop binary when running on Windows
+  /// or Linux. Other platforms return immediately.
+  static Future<void> prepareDesktopLibrary() async {
+    await bindings.ensureDesktopLibraryReady();
+    resetSupportCache();
+  }
+
   /// Returns `true` if the native TagLib library is supported and successfully loaded.
   static bool get isSupported {
     if (_isSupportedCached != null) return _isSupportedCached!;
@@ -84,6 +99,7 @@ class TagLibFile {
       'platform': Platform.operatingSystem,
       'platformVersion': Platform.operatingSystemVersion,
       'isSupportedCached': '$_isSupportedCached',
+      'usesDownloadedDesktopBinary': '${bindings.usesDownloadedDesktopBinary}',
     };
 
     final supported = isSupported;
@@ -99,6 +115,12 @@ class TagLibFile {
           .take(8)
           .join('\n');
       diagnostics['supportProbeStack'] = lines;
+    }
+    if (bindings.loadedDesktopBinaryPath != null) {
+      diagnostics['desktopBinaryPath'] = bindings.loadedDesktopBinaryPath!;
+    }
+    if (bindings.desktopBinaryError != null) {
+      diagnostics['desktopBinaryError'] = bindings.desktopBinaryError!;
     }
 
     try {
@@ -182,6 +204,9 @@ class TagLibFile {
     String path, {
     bool writeAccess = false,
   }) async {
+    if (Platform.isWindows || Platform.isLinux) {
+      await prepareDesktopLibrary();
+    }
     if (!isSupported) {
       throw UnsupportedError(
         'flutter_taglib is not supported or has been disabled on this platform.',

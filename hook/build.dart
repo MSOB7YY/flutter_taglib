@@ -22,6 +22,17 @@ void main(List<String> args) async {
       return;
     }
 
+    final buildDesktopFromSource =
+        Platform.environment['FLUTTER_TAGLIB_BUILD_DESKTOP_FROM_SOURCE'] ==
+        'true';
+    if ((targetOSStr == 'windows' || targetOSStr == 'linux') &&
+        !buildDesktopFromSource) {
+      print(
+        'flutter_taglib: Skipping desktop native compilation for $targetOSStr; runtime will download the prebuilt binary instead.',
+      );
+      return;
+    }
+
     final packageName = input.packageName;
     final nativeLibraryName = '${packageName}_native';
 
