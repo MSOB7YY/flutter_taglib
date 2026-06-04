@@ -44,7 +44,7 @@ jobs:
             output-name: flutter_taglib_windows_x64.dll
             search-pattern: flutter_taglib_native.dll
           - platform: linux-x64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             flutter-build-command: flutter build linux --release
             output-name: libflutter_taglib_linux_x64.so
             search-pattern: libflutter_taglib_native.so
@@ -147,7 +147,7 @@ jobs:
     name: Publish Release Assets
     needs: build-desktop
     if: startsWith(github.ref, 'refs/tags/desktop-binaries-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Download workflow artifacts
