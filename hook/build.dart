@@ -105,6 +105,35 @@ void main(List<String> args) async {
       '${taglibExtractedDir.path}/3rdparty/utfcpp/source',
     ];
 
+    // TagLib headers often use sibling-relative includes such as `tfile.h`
+    // or `oggfile.h`. On non-Windows desktop builds we can safely include all
+    // TagLib subdirectories to satisfy those transitive includes.
+    if (targetOSStr != 'windows') {
+      final discoveredIncludeDirs = <String>{};
+      final taglibRoot = Directory('${taglibExtractedDir.path}/taglib');
+      if (taglibRoot.existsSync()) {
+        for (final entity in taglibRoot.listSync(recursive: true)) {
+          if (entity is File &&
+              (entity.path.endsWith('.h') || entity.path.endsWith('.hpp'))) {
+            discoveredIncludeDirs.add(entity.parent.path);
+          }
+        }
+      }
+      final sortedIncludeDirs = discoveredIncludeDirs.toList()..sort();
+      includes.addAll(sortedIncludeDirs);
+    }
+
+    if (targetOSStr == 'windows') {
+      final flattenedIncludeDir = Directory(
+        '${cacheDir.path}/taglib_flattened_headers',
+      );
+      _prepareFlattenedWindowsHeaders(
+        taglibRoot: Directory('${taglibExtractedDir.path}/taglib'),
+        flattenedIncludeDir: flattenedIncludeDir,
+      );
+      includes.add(flattenedIncludeDir.path);
+    }
+
     // Find all .cpp files in taglib/taglib recursively and group them by
     // subdirectory. We intentionally keep the include list short on Windows
     // because adding every subdirectory can push cl.exe over the command line
@@ -227,6 +256,39 @@ void main(List<String> args) async {
         ..onRecord.listen((record) => print(record.message)),
     );
   });
+}
+
+void _prepareFlattenedWindowsHeaders({
+  required Directory taglibRoot,
+  required Directory flattenedIncludeDir,
+}) {
+  if (!taglibRoot.existsSync()) {
+    return;
+  }
+
+  if (flattenedIncludeDir.existsSync()) {
+    flattenedIncludeDir.deleteSync(recursive: true);
+  }
+  flattenedIncludeDir.createSync(recursive: true);
+
+  final seenHeaderNames = <String, String>{};
+  for (final entity in taglibRoot.listSync(recursive: true)) {
+    if (entity is! File) continue;
+    if (!entity.path.endsWith('.h') && !entity.path.endsWith('.hpp')) continue;
+
+    final headerName = entity.uri.pathSegments.last;
+    final existingPath = seenHeaderNames[headerName];
+    if (existingPath != null && existingPath != entity.path) {
+      throw StateError(
+        'Duplicate TagLib header name detected for Windows flattened includes: '
+        '$headerName\n- $existingPath\n- ${entity.path}',
+      );
+    }
+    seenHeaderNames[headerName] = entity.path;
+
+    final targetFile = File('${flattenedIncludeDir.path}/$headerName');
+    entity.copySync(targetFile.path);
+  }
 }
 
 bool _shouldBuildDesktopFromSource() {
