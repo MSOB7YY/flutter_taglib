@@ -179,7 +179,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find example/build/ -path '*/merged_native_libs/release/out/lib/*' -name 'libflutter_taglib_native.so' | while read -r file; do
+          find example/build/app/intermediates/stripped_native_libs/release/ -name 'libflutter_taglib_native.so' | while read -r file; do
             abi=$(basename "$(dirname "$file")")
             cp "$file" "dist/libflutter_taglib_android_${abi}.so"
             echo "Collected $abi binary: dist/libflutter_taglib_android_${abi}.so"
