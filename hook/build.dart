@@ -44,7 +44,7 @@ void main(List<String> args) async {
       final abi = _mapArchitectureToAndroidAbi(archStr);
       if (abi != null) {
         final prebuiltFile = File.fromUri(
-          input.packageRoot.resolve('android/src/main/jniLibs/$abi/libflutter_taglib_native.so'),
+          input.packageRoot.resolve('android/jniLibs/$abi/libflutter_taglib_native.so'),
         );
         if (prebuiltFile.existsSync()) {
           output.assets.code.add(
