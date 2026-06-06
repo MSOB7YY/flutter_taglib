@@ -124,7 +124,9 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
         // persisted permission. If the direct open failed, do not escalate to a
         // per-file write request and instead return null so the caller can fail
         // fast rather than showing a confirmation dialog for each file.
-        if (originalUri.authority == "com.android.externalstorage.documents") {
+        val isTreeUri = originalUri.authority == "com.android.externalstorage.documents" &&
+                originalUri.pathSegments.let { it.size >= 2 && it[0] == "tree" }
+        if (isTreeUri) {
             Log.w(
                 TAG,
                 "handleRequestWritePermission: refusing per-file write request for SAF tree uri=$originalUri",
