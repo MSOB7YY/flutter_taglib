@@ -34,6 +34,41 @@ void main(List<String> args) async {
     final packageName = input.packageName;
     final nativeLibraryName = '${packageName}_native';
 
+    final buildAndroidFromSource = _shouldBuildAndroidFromSource();
+    if (targetOSStr == 'android' && !buildAndroidFromSource) {
+      final archStr = input.config.code.targetArchitecture
+          .toString()
+          .split('.')
+          .last
+          .toLowerCase();
+      final abi = _mapArchitectureToAndroidAbi(archStr);
+      if (abi != null) {
+        final prebuiltFile = File.fromUri(
+          input.packageRoot.resolve('android/src/main/jniLibs/$abi/libflutter_taglib_native.so'),
+        );
+        if (prebuiltFile.existsSync()) {
+          output.assets.code.add(
+            CodeAsset(
+              package: packageName,
+              name: '${packageName}_bindings_generated.dart',
+              linkMode: DynamicLoadingBundled(),
+              file: prebuiltFile.uri,
+            ),
+          );
+          print('flutter_taglib: Using prebuilt Android binary for $abi');
+          return;
+        } else {
+          print(
+            'flutter_taglib: Prebuilt Android binary not found at ${prebuiltFile.path}. Falling back to source build.',
+          );
+        }
+      } else {
+        print(
+          'flutter_taglib: Unknown Android architecture: $archStr. Falling back to source build.',
+        );
+      }
+    }
+
     // --- Online Fetch TagLib 2.3 & utfcpp ---
     final taglibVersion = '2.3';
     final utfcppVersion = '4.0.9';
@@ -329,6 +364,47 @@ bool _shouldBuildDesktopFromSource() {
   }
 
   return false;
+}
+
+bool _shouldBuildAndroidFromSource() {
+  if (Platform.environment['FLUTTER_TAGLIB_BUILD_ANDROID_FROM_SOURCE'] ==
+      'true') {
+    return true;
+  }
+
+  const markerName = '.flutter_taglib_build_android_from_source';
+  final markerPaths = [
+    Directory.current.uri.resolve(markerName).toFilePath(),
+    if (Directory.current.parent.existsSync())
+      Directory.current.parent.uri.resolve(markerName).toFilePath(),
+    if (Directory.current.parent.existsSync() &&
+        Directory.current.parent.parent.existsSync())
+      Directory.current.parent.parent.uri.resolve(markerName).toFilePath(),
+  ];
+
+  for (final path in markerPaths) {
+    if (File(path).existsSync()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+String? _mapArchitectureToAndroidAbi(String archStr) {
+  switch (archStr) {
+    case 'arm64':
+      return 'arm64-v8a';
+    case 'arm':
+      return 'armeabi-v7a';
+    case 'x64':
+      return 'x86_64';
+    case 'ia32':
+    case 'x86':
+      return 'x86';
+    default:
+      return null;
+  }
 }
 
 Future<void> _downloadFile(String url, File targetFile) async {
