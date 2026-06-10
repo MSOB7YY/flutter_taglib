@@ -6,9 +6,10 @@
 A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart FFI and Native Assets. It allows you to read and write audio metadata (including album cover art) and extract technical audio properties across various platforms.
 
 > [!NOTE]
-> This package uses a hybrid strategy:
-> - **Android/iOS/macOS** keep using Flutter **Native Assets** / native platform builds.
+> This package uses a hybrid platform strategy:
 > - **Windows/Linux** use prebuilt desktop binaries that are downloaded on demand and cached locally, so host apps do not need to compile TagLib during every build.
+> - **Android** ships the TagLib native code directly in the project and builds it as part of the Android native pipeline.
+> - **iOS/macOS** continue to rely on native platform builds.
 
 ---
 
@@ -52,7 +53,7 @@ dependencies:
     path: /path/to/flutter_taglib
 ```
 
-### Desktop Binary Preparation
+### Platform Native Assets
 
 On **Windows** and **Linux**, call `prepareDesktopLibrary()` before your first
 desktop use, or just use `openAsync(...)`, which prepares the binary
@@ -452,6 +453,10 @@ Because mobile and Apple platforms still compile TagLib natively:
 For **Windows/Linux app builds**, the plugin downloads prebuilt desktop
 libraries instead of compiling TagLib locally. Repository maintainers can
 refresh those binaries through `.github/workflows/build-native-assets.yml`.
+
+For **Android**, TagLib is included directly in the Android project and built
+from source as part of the app/plugin build, so there is no separate download
+step for the native library.
 
 ---
 

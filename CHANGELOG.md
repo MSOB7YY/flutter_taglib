@@ -1,3 +1,7 @@
+## 1.3.0
+* Using pre-built artifacts for taglibs in Windows, Linux, and Android
+* Fixing Android permission issues
+
 ## 1.2.0
 * Supports Android content://media format links
 
