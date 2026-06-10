@@ -1,3 +1,6 @@
+## 1.3.1
+* Update readme
+
 ## 1.3.0
 * Using pre-built artifacts for taglibs in Windows, Linux, and Android
 * Fixing Android permission issues
