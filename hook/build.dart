@@ -25,10 +25,52 @@ void main(List<String> args) async {
     final buildDesktopFromSource = _shouldBuildDesktopFromSource();
     if ((targetOSStr == 'windows' || targetOSStr == 'linux') &&
         !buildDesktopFromSource) {
-      print(
-        'flutter_taglib: Skipping desktop native compilation for $targetOSStr; runtime will download the prebuilt binary instead.',
-      );
-      return;
+      final archStr = input.config.code.targetArchitecture
+          .toString()
+          .split('.')
+          .last
+          .toLowerCase();
+      if (archStr == 'x64') {
+        final remoteFileName = targetOSStr == 'windows'
+            ? 'flutter_taglib_windows_x64.dll'
+            : 'libflutter_taglib_linux_x64.so';
+        final localFileName = targetOSStr == 'windows'
+            ? 'flutter_taglib_native.dll'
+            : 'libflutter_taglib_native.so';
+
+        final cacheDir = Directory.fromUri(
+          input.packageRoot.resolve('.dart_tool/flutter_taglib/prebuilt/'),
+        );
+        if (!cacheDir.existsSync()) {
+          cacheDir.createSync(recursive: true);
+        }
+
+        final prebuiltFile = File.fromUri(
+          cacheDir.uri.resolve(localFileName),
+        );
+        if (!prebuiltFile.existsSync()) {
+          final url = 'https://github.com/axel10/flutter_taglib/releases/download/desktop-binaries-v1.2.0/$remoteFileName';
+          print('flutter_taglib: Downloading prebuilt binary from $url...');
+          await _downloadFile(url, prebuiltFile);
+        } else {
+          print('flutter_taglib: Using cached prebuilt binary at ${prebuiltFile.path}');
+        }
+
+        output.assets.code.add(
+          CodeAsset(
+            package: input.packageName,
+            name: '${input.packageName}_bindings_generated.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: prebuiltFile.uri,
+          ),
+        );
+        print('flutter_taglib: Bundled prebuilt binary for $targetOSStr $archStr');
+        return;
+      } else {
+        throw UnsupportedError(
+          'flutter_taglib prebuilt binaries are only supported on x64 architecture. Please build from source for $archStr.',
+        );
+      }
     }
 
     final packageName = input.packageName;

@@ -312,7 +312,7 @@ class _DesktopBindingsLoader {
   String? _baseUrl;
   String _version = _desktopBinaryVersion;
 
-  bool get requiresDesktopRuntimeLoad => Platform.isWindows || Platform.isLinux;
+  bool get requiresDesktopRuntimeLoad => false;
 
   _TagLibBindings get bindings {
     if (_bindings != null) {
