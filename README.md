@@ -5,6 +5,9 @@
 
 A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart FFI and Native Assets. It allows you to read and write audio metadata (including album cover art) and extract technical audio properties across various platforms.
 
+> [!WARNING]
+> Versions 1.3.0 and 1.3.1 did not download dynamic libraries locally during the build. Windows and Linux users may encounter a missing dynamic library error when starting the app without an internet connection. Please upgrade to version 1.3.2 as soon as possible.
+
 > [!NOTE]
 > This package uses a hybrid platform strategy:
 > - **Windows/Linux** use prebuilt desktop binaries that are downloaded on demand and cached locally, so host apps do not need to compile TagLib during every build.
