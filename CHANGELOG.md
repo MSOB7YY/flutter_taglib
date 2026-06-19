@@ -1,8 +1,6 @@
-## 1.3.3
-* Fixes the issue of Windows and Linux dynamic libraries not being downloaded during the build process.
-
 ## 1.3.2
 * Remove redundant logs
+* Fixes the issue of Windows and Linux dynamic libraries not being downloaded during the build process.
 
 ## 1.3.1
 * Update readme
