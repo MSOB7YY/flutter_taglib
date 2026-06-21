@@ -114,9 +114,9 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
             }
         }
 
-        // Prefer the already granted tree/document permission. This is the path
-        // we want for SAF-selected output directories so we do not trigger a
-        // per-file confirmation flow when writing many files in the same folder.
+        var recoverableException: android.app.RecoverableSecurityException? = null
+
+        // Try opening the original URI in rw mode on background thread if it is a content URI
         if (isContentUri) {
             try {
                 safeContext.contentResolver.openFileDescriptor(originalUri, "rw")?.use {
@@ -131,6 +131,7 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
                     TAG,
                     "handleRequestWritePermission: direct rw open hit RecoverableSecurityException for $originalUri: ${e.message}",
                 )
+                recoverableException = e
             } catch (e: SecurityException) {
                 Log.w(TAG, "handleRequestWritePermission: direct rw open denied for $originalUri: ${e.message}")
             } catch (e: Exception) {
@@ -173,24 +174,39 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
         val targetUriStr = targetUri.toString()
         Log.d(TAG, "handleRequestWritePermission: resolved targetUri=$targetUriStr")
 
-        // Switch to the main thread to safely run permission checks and start intent activities.
-        mainHandler.post {
-            // First try to check uri permission directly.
-            if (checkUriPermission(targetUri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) {
-                Log.d(TAG, "handleRequestWritePermission: Already has write permission for $targetUriStr")
+        // First check if we already have permission for targetUri (on background thread!)
+        if (checkUriPermission(targetUri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) {
+            Log.d(TAG, "handleRequestWritePermission: Already has write permission via checkUriPermission for $targetUriStr")
+            mainHandler.post {
                 result.success(targetUriStr)
-                return@post
             }
+            return
+        }
 
-            // Try opening the descriptor in "rw" mode to see if we already have write permission.
+        // Try opening the resolved targetUri in rw mode on background thread if it's different
+        if (targetUri != originalUri) {
             try {
                 safeContext.contentResolver.openFileDescriptor(targetUri, "rw")?.use {
-                    Log.d(TAG, "handleRequestWritePermission: Successfully opened openFileDescriptor in 'rw' mode, returning $targetUriStr")
-                    result.success(targetUriStr)
-                    return@post
+                    Log.d(TAG, "handleRequestWritePermission: Successfully opened resolved targetUri in 'rw' mode, returning $targetUriStr")
+                    mainHandler.post {
+                        result.success(targetUriStr)
+                    }
+                    return
                 }
             } catch (e: android.app.RecoverableSecurityException) {
-                Log.d(TAG, "handleRequestWritePermission: RecoverableSecurityException caught, launching userAction intent")
+                Log.d(TAG, "handleRequestWritePermission: RecoverableSecurityException caught for targetUri: ${e.message}")
+                recoverableException = e
+            } catch (e: SecurityException) {
+                Log.w(TAG, "handleRequestWritePermission: SecurityException during 'rw' open check for targetUri: ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "handleRequestWritePermission: Exception during 'rw' open check for targetUri: ${e.message}")
+            }
+        }
+
+        // Switch to the main thread ONLY for launching user action intents
+        val currentRecoverableException = recoverableException
+        if (currentRecoverableException != null) {
+            mainHandler.post {
                 val safeActivity = activity ?: run {
                     Log.e(TAG, "handleRequestWritePermission: activity is null for RecoverableSecurityException")
                     result.error("NO_ACTIVITY", "Activity is null, cannot request write permission", null)
@@ -200,7 +216,7 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
                 resolvedUriString = targetUriStr
                 try {
                     safeActivity.startIntentSenderForResult(
-                        e.userAction.actionIntent.intentSender,
+                        currentRecoverableException.userAction.actionIntent.intentSender,
                         REQUEST_WRITE_PERMISSION,
                         null,
                         0,
@@ -213,16 +229,14 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
                     Log.e(TAG, "handleRequestWritePermission: failed launching RecoverableSecurityException intent: ${launchError.message}")
                     result.error("WRITE_PERMISSION_FAILED", launchError.message, null)
                 }
-                return@post
-            } catch (e: SecurityException) {
-                Log.w(TAG, "handleRequestWritePermission: SecurityException during 'rw' open check: ${e.message}")
-            } catch (e: Exception) {
-                Log.w(TAG, "handleRequestWritePermission: Exception during 'rw' open check: ${e.message}")
             }
+            return
+        }
 
-            // Android 11+ (API 30+) MediaStore.createWriteRequest (only for MediaStore URIs)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && targetUri.authority == "media") {
-                Log.d(TAG, "handleRequestWritePermission: API 30+, using MediaStore.createWriteRequest")
+        // Android 11+ (API 30+) MediaStore.createWriteRequest (only for MediaStore URIs)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && targetUri.authority == "media") {
+            Log.d(TAG, "handleRequestWritePermission: API 30+, using MediaStore.createWriteRequest")
+            mainHandler.post {
                 val safeActivity = activity ?: run {
                     Log.e(TAG, "handleRequestWritePermission: activity is null for MediaStore.createWriteRequest")
                     result.error("NO_ACTIVITY", "Activity is null, cannot request write permission", null)
@@ -245,15 +259,12 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
                     Log.e(TAG, "handleRequestWritePermission: MediaStore.createWriteRequest failed: ${e.message}")
                     result.error("WRITE_PERMISSION_FAILED", e.message, null)
                 }
-            } else {
-                Log.w(TAG, "handleRequestWritePermission: Not a media store URI or SDK < 30, and open check failed. No permission available.")
-                // If it is not a media store URI or SDK < R, we cannot ask for write permission via createWriteRequest.
-                // But we can check if we already have it. If not, return null.
-                if (checkUriPermission(targetUri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) {
-                    result.success(targetUriStr)
-                } else {
-                    result.success(null)
-                }
+            }
+        } else {
+            // Not a MediaStore URI or SDK < 30, and both checks failed. Return null.
+            Log.w(TAG, "handleRequestWritePermission: No permission available, returning null")
+            mainHandler.post {
+                result.success(null)
             }
         }
     }
@@ -310,10 +321,6 @@ class FlutterTaglibPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plug
                         Log.d(TAG, "resolveToMediaStoreUri: docId matches specific MediaStore ID type=$type, id=$id")
                         if (type.equals("audio", ignoreCase = true)) {
                             return ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
-                        } else if (type.equals("video", ignoreCase = true)) {
-                            return ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
-                        } else if (type.equals("image", ignoreCase = true)) {
-                            return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
                         }
                     }
                 }
