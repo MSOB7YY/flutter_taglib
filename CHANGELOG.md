@@ -1,3 +1,6 @@
+## 1.3.3
+* Lower the Dart SDK requirements to 3.11.0
+
 ## 1.3.2
 * Remove redundant logs
 * Fixes the issue of Windows and Linux dynamic libraries not being downloaded during the build process.
