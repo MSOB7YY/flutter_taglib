@@ -66,6 +66,10 @@ class TagLibFile {
   /// Overrides the desktop binary download source used on Windows and Linux.
   ///
   /// Call this before [prepareDesktopLibrary], [openAsync], or [isSupported].
+  @Deprecated(
+    'No longer supported. Setting a custom binary source at runtime has no effect. '
+    'If you need a custom binary source, configure it via build-time environment variables or configuration files.',
+  )
   static void configureDesktopBinarySource({String? baseUrl, String? version}) {
     bindings.configureDesktopBinarySource(baseUrl: baseUrl, version: version);
     resetSupportCache();
@@ -73,6 +77,9 @@ class TagLibFile {
 
   /// Downloads and loads the prebuilt desktop binary when running on Windows
   /// or Linux. Other platforms return immediately.
+  @Deprecated(
+    'No longer needed when using Native Assets. Native libraries are now bundled at build time.',
+  )
   static Future<void> prepareDesktopLibrary() async {
     await bindings.ensureDesktopLibraryReady();
     resetSupportCache();
