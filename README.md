@@ -56,26 +56,6 @@ dependencies:
     path: /path/to/flutter_taglib
 ```
 
-### Platform Native Assets
-
-On **Windows** and **Linux**, call `prepareDesktopLibrary()` before your first
-desktop use, or just use `openAsync(...)`, which prepares the binary
-automatically:
-
-```dart
-await TagLibFile.prepareDesktopLibrary();
-final file = await TagLibFile.openAsync(filePath);
-```
-
-If you publish your own prebuilt binaries, point the plugin at your release
-endpoint before first use:
-
-```dart
-TagLibFile.configureDesktopBinarySource(
-  baseUrl: 'https://github.com/your-org/flutter_taglib/releases/download/desktop-binaries-v1.2.0',
-);
-```
-
 ---
 
 ## Usage Guide
