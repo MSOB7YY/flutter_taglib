@@ -1,3 +1,6 @@
+## 1.4.1
+* Eliminate analyze info prompt
+
 ## 1.4.0
 * Song duration accurate to milliseconds.
 * Deprecated unsupported interfaces.
