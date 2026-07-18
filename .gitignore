@@ -36,3 +36,4 @@ migrate_working_dir/
 # Ignore local taglib source directory
 /taglib/
 
+kotlin-compiler-*.salive
