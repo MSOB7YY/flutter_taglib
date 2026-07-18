@@ -49,7 +49,7 @@ void main(List<String> args) async {
           cacheDir.uri.resolve(localFileName),
         );
         if (!prebuiltFile.existsSync()) {
-          final url = 'https://github.com/axel10/flutter_taglib/releases/download/desktop-binaries-v1.2.0/$remoteFileName';
+          final url = 'https://github.com/axel10/flutter_taglib/releases/download/desktop-binaries-v1.4.0/$remoteFileName';
           print('flutter_taglib: Downloading prebuilt binary from $url...');
           await _downloadFile(url, prebuiltFile);
         } else {
@@ -84,29 +84,41 @@ void main(List<String> args) async {
           .last
           .toLowerCase();
       final abi = _mapArchitectureToAndroidAbi(archStr);
-      if (abi != null) {
-        final prebuiltFile = File.fromUri(
-          input.packageRoot.resolve('android/jniLibs/$abi/libflutter_taglib_native.so'),
+      if (abi != null && abi != 'x86') {
+        final remoteFileName = 'libflutter_taglib_android_$abi.so';
+        final localFileName = 'libflutter_taglib_native_$abi.so';
+
+        final cacheDir = Directory.fromUri(
+          input.packageRoot.resolve('.dart_tool/flutter_taglib/prebuilt/'),
         );
-        if (prebuiltFile.existsSync()) {
-          output.assets.code.add(
-            CodeAsset(
-              package: packageName,
-              name: '${packageName}_bindings_generated.dart',
-              linkMode: DynamicLoadingBundled(),
-              file: prebuiltFile.uri,
-            ),
-          );
-          print('flutter_taglib: Using prebuilt Android binary for $abi');
-          return;
-        } else {
-          print(
-            'flutter_taglib: Prebuilt Android binary not found at ${prebuiltFile.path}. Falling back to source build.',
-          );
+        if (!cacheDir.existsSync()) {
+          cacheDir.createSync(recursive: true);
         }
+
+        final prebuiltFile = File.fromUri(
+          cacheDir.uri.resolve(localFileName),
+        );
+        if (!prebuiltFile.existsSync()) {
+          final url = 'https://github.com/axel10/flutter_taglib/releases/download/desktop-binaries-v1.4.0/$remoteFileName';
+          print('flutter_taglib: Downloading prebuilt Android binary from $url...');
+          await _downloadFile(url, prebuiltFile);
+        } else {
+          print('flutter_taglib: Using cached prebuilt Android binary at ${prebuiltFile.path}');
+        }
+
+        output.assets.code.add(
+          CodeAsset(
+            package: packageName,
+            name: '${packageName}_bindings_generated.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: prebuiltFile.uri,
+          ),
+        );
+        print('flutter_taglib: Bundled prebuilt binary for Android $archStr ($abi)');
+        return;
       } else {
         print(
-          'flutter_taglib: Unknown Android architecture: $archStr. Falling back to source build.',
+          'flutter_taglib: No prebuilt Android binary for architecture: $archStr ($abi). Falling back to source build.',
         );
       }
     }

@@ -10,8 +10,7 @@ A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart F
 
 > [!NOTE]
 > This package uses a hybrid platform strategy:
-> - **Windows/Linux** use prebuilt desktop binaries that are downloaded on demand and cached locally, so host apps do not need to compile TagLib during every build.
-> - **Android** ships prebuilt TagLib native libraries directly in `android/jniLibs`, so app builds do not need to compile TagLib locally.
+> - **Windows/Linux/Android** use prebuilt binaries that are downloaded on demand and cached locally, so host apps do not need to compile TagLib during every build.
 > - **iOS/macOS** continue to rely on native platform builds.
 
 ---
@@ -432,16 +431,12 @@ platforms:
 Because iOS/macOS still compile native code during the platform build:
 - **iOS/macOS**: Requires Xcode.
 
-For **Windows/Linux app builds**, the plugin downloads prebuilt desktop
+For **Windows/Linux/Android app builds**, the plugin downloads prebuilt
 libraries instead of compiling TagLib locally. Repository maintainers can
 refresh those binaries through `.github/workflows/build-native-assets.yml`.
 
-For **Android**, TagLib is already bundled as prebuilt native libraries under
-`android/jniLibs`, so there is no separate download step and no NDK setup is
-required for normal app builds.
-
-If you maintain the Android binaries yourself and need to regenerate them from
-source, you may still need an Android NDK toolchain in your build environment.
+If you maintain the binaries yourself and need to regenerate them from
+source, you may still need the necessary build tools/Android NDK toolchain in your build environment.
 
 ---
 
