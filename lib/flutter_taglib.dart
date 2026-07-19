@@ -622,6 +622,32 @@ class TagLibFile {
     return result;
   }
 
+  /// The front cover art bytes, or `null` if the file has no cover art.
+  ///
+  /// Unlike [coverData], this reads only the cover bytes: the remaining pictures
+  /// and their metadata (mime type, description, picture type) are never copied
+  /// across the FFI boundary. Prefer this when all you need is the image.
+  ///
+  /// The picture typed `Front Cover` wins; otherwise the first picture is used.
+  Uint8List? get frontCover {
+    _checkClosed();
+    final size = bindings.taglib_bridge_front_cover_size(_handle);
+    if (size == 0) return null;
+
+    final buffer = malloc<ffi.Uint8>(size);
+    try {
+      final copied = bindings.taglib_bridge_front_cover_data(
+        _handle,
+        buffer,
+        size,
+      );
+      if (copied != 1) return null;
+      return Uint8List.fromList(buffer.asTypedList(size));
+    } finally {
+      malloc.free(buffer);
+    }
+  }
+
   /// Retrieves the cover art image bytes as a [Uint8List].
   ///
   /// Returns `null` if the file has no cover art.

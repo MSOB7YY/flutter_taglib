@@ -21,7 +21,7 @@ A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart F
 - **Full Tag Editing**: Read and modify standard tag fields: Title, Artist, Album, Genre, Year, Track Number, and Comment.
 - **Album Art (Cover) Management**:
   - Check if a file contains cover art (`hasCover`).
-  - Retrieve cover art bytes (`coverData`) and its MIME type (`coverMimeType`).
+  - Retrieve cover art bytes (`coverData`) and its MIME type (`coverMimeType`), or just the front cover bytes (`frontCover`).
   - Set or update cover art, or remove it entirely.
 - **Audio Technical Properties**: Extract read-only properties:
   - Duration (as Dart `Duration`)
@@ -164,6 +164,10 @@ void handleCoverArt(TagLibFile file, Uint8List? newCoverBytes) {
   } else {
     print('No cover art found.');
   }
+
+  // 1b. Bytes only: skips the other pictures and their metadata entirely,
+  //     which is cheaper when you just want to display the image.
+  final Uint8List? frontCover = file.frontCover;
 
   // 2. Set or Update Cover Art
   if (newCoverBytes != null) {

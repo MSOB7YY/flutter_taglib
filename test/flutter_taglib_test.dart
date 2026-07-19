@@ -164,6 +164,45 @@ void main() {
     }
   });
 
+  group('TagLib Front Cover', () {
+    test('frontCover matches the picture list result', () {
+      final file = TagLibFile.open(
+        'test/assets/01 TempleOS Hymn Risen (Remix).mp3',
+      );
+      expect(file, isNotNull);
+      if (file != null) {
+        final frontCover = file.frontCover;
+        final pictures = file.pictures;
+
+        if (pictures.isEmpty) {
+          expect(frontCover, isNull);
+        } else {
+          expect(frontCover, isNotNull);
+          print('Front cover: ${frontCover!.length} bytes');
+          final expected = pictures.firstWhere(
+            (picture) => picture.pictureType == 'Front Cover',
+            orElse: () => pictures.first,
+          );
+          expect(frontCover, equals(expected.bytes));
+        }
+        file.close();
+      }
+    });
+
+    test('frontCover is repeatable', () {
+      final file = TagLibFile.open(
+        'test/assets/01 TempleOS Hymn Risen (Remix).flac',
+      );
+      expect(file, isNotNull);
+      if (file != null) {
+        // The native side caches then releases the bytes per call, so a second
+        // read must return the same data rather than null or a truncated buffer.
+        expect(file.frontCover, equals(file.frontCover));
+        file.close();
+      }
+    });
+  });
+
   group('TagLib Metadata Modifying', () {
     late Directory tempDir;
     late File tempFile;

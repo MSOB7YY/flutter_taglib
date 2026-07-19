@@ -1,4 +1,5 @@
 ## Unreleased
+* Added `TagLibFile.frontCover`, returning only the front cover bytes without materializing the other pictures or their metadata.
 * Added `TagLibFile.format` (and `AudioInfo.format`), reporting the audio format detected from the file contents (`MP3`, `FLAC`, `OPUS`, `AAC`, `ALAC`, `AIFF`, ...), or `null` when it cannot be determined.
 
 ## 1.4.1

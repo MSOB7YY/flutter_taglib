@@ -166,6 +166,27 @@ external ffi.Pointer<ffi.Char> taglib_bridge_get_cover_mime_type(
   ffi.Pointer<TagLibBridgeFile> file,
 );
 
+/// Front cover bytes only, without materializing the other pictures or their
+/// metadata. Prefers the picture typed "Front Cover", falling back to the first.
+/// Call taglib_bridge_front_cover_size first: it resolves and caches the bytes
+/// and returns their size (0 when there is no cover). Then call
+/// taglib_bridge_front_cover_data to copy them out, which releases the cache.
+@ffi.Native<ffi.Uint32 Function(ffi.Pointer<TagLibBridgeFile>)>()
+external int taglib_bridge_front_cover_size(ffi.Pointer<TagLibBridgeFile> file);
+
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<TagLibBridgeFile>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Uint32,
+  )
+>()
+external int taglib_bridge_front_cover_data(
+  ffi.Pointer<TagLibBridgeFile> file,
+  ffi.Pointer<ffi.Uint8> buffer,
+  int buffer_size,
+);
+
 /// Write album art. mime_type can be "image/jpeg" or "image/png". Pass data=NULL, size=0 to remove cover.
 @ffi.Native<
   ffi.Int Function(

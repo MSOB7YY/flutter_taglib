@@ -221,6 +221,7 @@ struct TagLibBridgeFile {
     std::string cachedBitrateMode;
     std::string cachedFormat;
     bool formatResolved = false;
+    TagLib::ByteVector cachedFrontCover;
 };
 
 struct TagLibBridgePictures {
@@ -831,6 +832,52 @@ const char* taglib_bridge_get_cover_mime_type(TagLibBridgeFile* file) {
         return file->cachedCoverMime.c_str();
     } catch (...) {
         return "";
+    }
+}
+
+uint32_t taglib_bridge_front_cover_size(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
+    try {
+        file->cachedFrontCover = TagLib::ByteVector();
+
+        auto pictures = read_picture_list(file);
+        if (pictures.isEmpty()) return 0;
+
+        // Prefer an explicitly typed front cover; otherwise take the first picture,
+        // matching how embedded art is conventionally ordered.
+        const TagLib::VariantMap* selected = nullptr;
+        for (const auto& picture : pictures) {
+            auto typeVar = picture["pictureType"];
+            if (!typeVar.isEmpty() && typeVar.toString() == "Front Cover") {
+                selected = &picture;
+                break;
+            }
+        }
+        if (!selected) selected = &pictures.front();
+
+        auto dataVar = (*selected)["data"];
+        if (dataVar.isEmpty()) return 0;
+
+        file->cachedFrontCover = dataVar.toByteVector();
+        return static_cast<uint32_t>(file->cachedFrontCover.size());
+    } catch (...) {
+        file->cachedFrontCover = TagLib::ByteVector();
+        return 0;
+    }
+}
+
+int taglib_bridge_front_cover_data(TagLibBridgeFile* file, uint8_t* buffer, uint32_t buffer_size) {
+    if (!file || !buffer || buffer_size == 0) return 0;
+    try {
+        if (file->cachedFrontCover.isEmpty()) return 0;
+        uint32_t size = static_cast<uint32_t>(file->cachedFrontCover.size());
+        uint32_t toCopy = size < buffer_size ? size : buffer_size;
+        std::memcpy(buffer, file->cachedFrontCover.data(), toCopy);
+        // The bytes are handed off to the caller, so drop our copy right away.
+        file->cachedFrontCover = TagLib::ByteVector();
+        return 1;
+    } catch (...) {
+        return 0;
     }
 }
 

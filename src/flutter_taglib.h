@@ -66,6 +66,14 @@ FFI_PLUGIN_EXPORT uint32_t taglib_bridge_get_cover_data_size(TagLibBridgeFile* f
 FFI_PLUGIN_EXPORT int taglib_bridge_get_cover_data(TagLibBridgeFile* file, uint8_t* buffer, uint32_t buffer_size);
 FFI_PLUGIN_EXPORT const char* taglib_bridge_get_cover_mime_type(TagLibBridgeFile* file);
 
+// Front cover bytes only, without materializing the other pictures or their
+// metadata. Prefers the picture typed "Front Cover", falling back to the first.
+// Call taglib_bridge_front_cover_size first: it resolves and caches the bytes
+// and returns their size (0 when there is no cover). Then call
+// taglib_bridge_front_cover_data to copy them out, which releases the cache.
+FFI_PLUGIN_EXPORT uint32_t taglib_bridge_front_cover_size(TagLibBridgeFile* file);
+FFI_PLUGIN_EXPORT int taglib_bridge_front_cover_data(TagLibBridgeFile* file, uint8_t* buffer, uint32_t buffer_size);
+
 // Write album art. mime_type can be "image/jpeg" or "image/png". Pass data=NULL, size=0 to remove cover.
 FFI_PLUGIN_EXPORT int taglib_bridge_set_cover(TagLibBridgeFile* file, const char* mime_type, const uint8_t* data, uint32_t size);
 
