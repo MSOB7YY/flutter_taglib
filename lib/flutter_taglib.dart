@@ -4,10 +4,13 @@ library;
 import 'dart:ffi' as ffi;
 import 'dart:io' show Platform;
 import 'dart:typed_data';
-import 'package:ffi/ffi.dart';
-import 'package:flutter/services.dart' show MethodChannel;
+
 import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/services.dart' show MethodChannel;
+
+import 'package:ffi/ffi.dart';
 import 'package:logging/logging.dart';
+
 import 'src/flutter_taglib_bindings.dart' as bindings;
 
 final Logger _logger = Logger('flutter_taglib');
@@ -529,11 +532,29 @@ class TagLibFile {
     return value.isEmpty ? null : value;
   }
 
+  /// Whether the audio is losslessly encoded, or `null` when it cannot be
+  /// determined.
+  ///
+  /// This is resolved from the encoded stream rather than inferred from
+  /// [format], because several containers carry either kind of audio: MP4 holds
+  /// AAC or ALAC, WMA has a lossless profile, WavPack has a hybrid mode, and
+  /// WAV/AIFF usually hold PCM but may be compressed.
+  ///
+  /// Tracker formats (`MOD`, `S3M`, `IT`, `XM`) return `null`, since they
+  /// sequence sampled instruments and the distinction does not apply.
+  bool? get isLossless {
+    _checkClosed();
+    final result = bindings.taglib_bridge_is_lossless(_handle);
+    if (result < 0) return null;
+    return result == 1;
+  }
+
   /// Detailed audio properties of the file.
   AudioInfo get audioInfo {
     _checkClosed();
     return AudioInfo(
       format: format,
+      isLossless: isLossless,
       duration: duration,
       bitrate: bitrate,
       bitrateMode: bitrateMode,
@@ -974,6 +995,9 @@ class AudioInfo {
   /// The audio format (e.g., 'MP3', 'FLAC', 'OPUS'), or `null` if undetermined.
   final String? format;
 
+  /// Whether the audio is losslessly encoded, or `null` if undetermined.
+  final bool? isLossless;
+
   /// The duration of the audio.
   final Duration duration;
 
@@ -992,6 +1016,7 @@ class AudioInfo {
   /// Creates an [AudioInfo] instance representing detailed audio properties.
   AudioInfo({
     required this.format,
+    required this.isLossless,
     required this.duration,
     required this.bitrate,
     required this.bitrateMode,
@@ -1001,7 +1026,7 @@ class AudioInfo {
 
   @override
   String toString() =>
-      'AudioInfo(format: $format, duration: $duration, bitrate: $bitrate kbps, bitrateMode: $bitrateMode, sampleRate: $sampleRate Hz, channels: $channels)';
+      'AudioInfo(format: $format, isLossless: $isLossless, duration: $duration, bitrate: $bitrate kbps, bitrateMode: $bitrateMode, sampleRate: $sampleRate Hz, channels: $channels)';
 }
 
 /// Dummy class used by Flutter platform registration for Dart-only FFI platforms

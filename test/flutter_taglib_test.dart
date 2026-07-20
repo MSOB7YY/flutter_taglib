@@ -164,6 +164,57 @@ void main() {
     }
   });
 
+  group('TagLib Lossless Detection', () {
+    final expectedLossless = <String, bool>{
+      'mp3': false,
+      'flac': true,
+      'ogg': false,
+      'opus': false,
+      'wav': true,
+      'aiff': true,
+    };
+
+    for (final entry in expectedLossless.entries) {
+      test('Detect lossless for ${entry.key.toUpperCase()}', () {
+        final path = 'test/assets/01 TempleOS Hymn Risen (Remix).${entry.key}';
+        if (!File(path).existsSync()) {
+          markTestSkipped('Missing asset: $path');
+          return;
+        }
+
+        final file = TagLibFile.open(path);
+        expect(file, isNotNull);
+        if (file != null) {
+          print('${entry.key.toUpperCase()} isLossless: ${file.isLossless}');
+          expect(file.isLossless, equals(entry.value));
+          expect(file.audioInfo.isLossless, equals(file.isLossless));
+          file.close();
+        }
+      });
+    }
+
+    test('M4A resolves lossless from its codec', () {
+      final file = TagLibFile.open(
+        'test/assets/01 TempleOS Hymn Risen (Remix).m4a',
+      );
+      expect(file, isNotNull);
+      if (file != null) {
+        // The container holds either AAC (lossy) or ALAC (lossless), so the
+        // verdict must agree with the codec reported by [format].
+        print('M4A format: ${file.format}, isLossless: ${file.isLossless}');
+        switch (file.format) {
+          case 'ALAC':
+            expect(file.isLossless, isTrue);
+          case 'AAC':
+            expect(file.isLossless, isFalse);
+          default:
+            expect(file.isLossless, isNull);
+        }
+        file.close();
+      }
+    });
+  });
+
   group('TagLib Front Cover', () {
     test('frontCover matches the picture list result', () {
       final file = TagLibFile.open(

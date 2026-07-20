@@ -60,6 +60,10 @@ FFI_PLUGIN_EXPORT const char* taglib_bridge_get_bitrate_mode(TagLibBridgeFile* f
 // Returns NULL when the format could not be determined.
 FFI_PLUGIN_EXPORT const char* taglib_bridge_get_format(TagLibBridgeFile* file);
 
+// Whether the audio is losslessly encoded.
+// Returns 1 for lossless, 0 for lossy, and -1 when it cannot be determined.
+FFI_PLUGIN_EXPORT int taglib_bridge_is_lossless(TagLibBridgeFile* file);
+
 // Album Art / Picture APIs
 FFI_PLUGIN_EXPORT int taglib_bridge_has_cover(TagLibBridgeFile* file);
 FFI_PLUGIN_EXPORT uint32_t taglib_bridge_get_cover_data_size(TagLibBridgeFile* file);

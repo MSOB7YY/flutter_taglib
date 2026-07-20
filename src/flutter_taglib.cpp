@@ -346,6 +346,48 @@ static const std::unordered_map<std::type_index, const char*>& format_token_tabl
     return table;
 }
 
+// Tri-state verdict for taglib_bridge_is_lossless.
+enum LosslessVerdict { kLossy = 0, kLossless = 1, kLosslessUnknown = -1 };
+
+// Formats whose lossless-ness follows from the format alone. The remaining ones
+// (MP4, WAV, AIFF, WavPack, ASF) can carry either kind of stream and are
+// resolved from their audio properties instead.
+static const std::unordered_map<std::type_index, int>& lossless_table() {
+    static const std::unordered_map<std::type_index, int> table = {
+        {std::type_index(typeid(TagLib::MPEG::File)), kLossy},
+        {std::type_index(typeid(TagLib::FLAC::File)), kLossless},
+        {std::type_index(typeid(TagLib::Ogg::FLAC::File)), kLossless},
+        {std::type_index(typeid(TagLib::Ogg::Vorbis::File)), kLossy},
+        {std::type_index(typeid(TagLib::Ogg::Opus::File)), kLossy},
+        {std::type_index(typeid(TagLib::Ogg::Speex::File)), kLossy},
+        {std::type_index(typeid(TagLib::APE::File)), kLossless},
+        {std::type_index(typeid(TagLib::MPC::File)), kLossy},
+        {std::type_index(typeid(TagLib::TrueAudio::File)), kLossless},
+        // DSD stores a raw 1-bit stream; DST compression inside DFF is lossless.
+        {std::type_index(typeid(TagLib::DSF::File)), kLossless},
+        {std::type_index(typeid(TagLib::DSDIFF::File)), kLossless},
+        // Tracker formats sequence sampled instruments, so neither verdict applies.
+        {std::type_index(typeid(TagLib::Mod::File)), kLosslessUnknown},
+        {std::type_index(typeid(TagLib::S3M::File)), kLosslessUnknown},
+        {std::type_index(typeid(TagLib::IT::File)), kLosslessUnknown},
+        {std::type_index(typeid(TagLib::XM::File)), kLosslessUnknown},
+    };
+    return table;
+}
+
+// AIFF-C compression identifiers that store PCM verbatim. Every other AIFF-C
+// compression in common use (ima4, ulaw, MAC3/MAC6, GSM, QDMC, mp3) is lossy.
+static bool is_lossless_aifc_compression(const TagLib::ByteVector& compression) {
+    static const char* const losslessTypes[] = {
+        "NONE", "sowt", "twos", "raw ", "in24", "in32",
+        "fl32", "FL32", "fl64", "FL64",
+    };
+    for (const char* type : losslessTypes) {
+        if (compression == TagLib::ByteVector(type, 4)) return true;
+    }
+    return false;
+}
+
 static TagLib::VariantMap build_picture_map(
     const uint8_t* data,
     uint32_t size,
@@ -779,6 +821,77 @@ const char* taglib_bridge_get_format(TagLibBridgeFile* file) {
         return file->cachedFormat.empty() ? nullptr : file->cachedFormat.c_str();
     } catch (...) {
         return nullptr;
+    }
+}
+
+int taglib_bridge_is_lossless(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return kLosslessUnknown;
+    try {
+        auto filePtr = file->fileRef->file();
+        if (!filePtr) return kLosslessUnknown;
+
+        const std::type_index fileType(typeid(*filePtr));
+        auto audioProps = file->fileRef->audioProperties();
+
+        // Containers that can hold either a lossy or a lossless stream must be
+        // resolved from the stream itself rather than from the format.
+        if (fileType == std::type_index(typeid(TagLib::MP4::File))) {
+            auto props = dynamic_cast<TagLib::MP4::Properties*>(audioProps);
+            if (!props) return kLosslessUnknown;
+            if (props->codec() == TagLib::MP4::Properties::ALAC) return kLossless;
+            if (props->codec() == TagLib::MP4::Properties::AAC) return kLossy;
+            return kLosslessUnknown;
+        }
+
+        if (fileType == std::type_index(typeid(TagLib::ASF::File))) {
+            auto props = dynamic_cast<TagLib::ASF::Properties*>(audioProps);
+            if (!props) return kLosslessUnknown;
+            switch (props->codec()) {
+                case TagLib::ASF::Properties::WMA9Lossless: return kLossless;
+                case TagLib::ASF::Properties::WMA1:
+                case TagLib::ASF::Properties::WMA2:
+                case TagLib::ASF::Properties::WMA9Pro: return kLossy;
+                default: return kLosslessUnknown;
+            }
+        }
+
+        if (fileType == std::type_index(typeid(TagLib::WavPack::File))) {
+            // WavPack has a hybrid mode, so the file itself carries the answer.
+            auto props = dynamic_cast<TagLib::WavPack::Properties*>(audioProps);
+            return props ? (props->isLossless() ? kLossless : kLossy) : kLosslessUnknown;
+        }
+
+        if (fileType == std::type_index(typeid(TagLib::RIFF::WAV::File))) {
+            auto props = dynamic_cast<TagLib::RIFF::WAV::Properties*>(audioProps);
+            if (!props) return kLosslessUnknown;
+            // WAVE format tags per RFC 2361: PCM and IEEE float store samples
+            // verbatim. EXTENSIBLE wraps a subformat TagLib does not expose, but
+            // in practice it is used for multichannel or high-bit-depth PCM.
+            switch (props->format()) {
+                case 0x0001: // WAVE_FORMAT_PCM
+                case 0x0003: // WAVE_FORMAT_IEEE_FLOAT
+                case 0xFFFE: // WAVE_FORMAT_EXTENSIBLE
+                    return kLossless;
+                case 0x0000: // unknown / unset
+                    return kLosslessUnknown;
+                default:
+                    return kLossy;
+            }
+        }
+
+        if (fileType == std::type_index(typeid(TagLib::RIFF::AIFF::File))) {
+            auto props = dynamic_cast<TagLib::RIFF::AIFF::Properties*>(audioProps);
+            if (!props) return kLosslessUnknown;
+            // Plain AIFF is always uncompressed PCM; only AIFF-C can compress.
+            if (!props->isAiffC()) return kLossless;
+            return is_lossless_aifc_compression(props->compressionType()) ? kLossless : kLossy;
+        }
+
+        const auto& table = lossless_table();
+        const auto match = table.find(fileType);
+        return match != table.end() ? match->second : kLosslessUnknown;
+    } catch (...) {
+        return kLosslessUnknown;
     }
 }
 

@@ -1,4 +1,5 @@
 ## Unreleased
+* Added `TagLibFile.isLossless` (and `AudioInfo.isLossless`), resolved from the encoded stream so containers such as MP4 (AAC/ALAC), WMA, WavPack and WAV/AIFF report correctly. Returns `null` when undetermined.
 * Improve `TagLibFile.coverData` performance.
 * Added `TagLibFile.format` (and `AudioInfo.format`), reporting the audio format detected from the file contents (`MP3`, `FLAC`, `OPUS`, `AAC`, `ALAC`, `AIFF`, ...), or `null` when it cannot be determined.
 
