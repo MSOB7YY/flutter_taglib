@@ -131,6 +131,129 @@ void main() {
     });
   });
 
+  group('TagLib Format Detection', () {
+    final expectedFormats = <String, Object>{
+      'mp3': 'MP3',
+      'flac': 'FLAC',
+      'ogg': 'VORBIS',
+      'opus': 'OPUS',
+      'wav': 'WAV',
+      'aiff': 'AIFF',
+      // The container reports its codec, which depends on how the asset was encoded.
+      'm4a': anyOf('AAC', 'ALAC', 'MP4'),
+    };
+
+    for (final entry in expectedFormats.entries) {
+      test('Detect ${entry.key.toUpperCase()} format', () {
+        final path =
+            'test/assets/01 TempleOS Hymn Risen (Remix).${entry.key}';
+        if (!File(path).existsSync()) {
+          markTestSkipped('Missing asset: $path');
+          return;
+        }
+
+        final file = TagLibFile.open(path);
+        expect(file, isNotNull);
+        if (file != null) {
+          print('${entry.key.toUpperCase()} Format: ${file.format}');
+          expect(file.format, entry.value);
+          expect(file.audioInfo.format, equals(file.format));
+          file.close();
+        }
+      });
+    }
+  });
+
+  group('TagLib Lossless Detection', () {
+    final expectedLossless = <String, bool>{
+      'mp3': false,
+      'flac': true,
+      'ogg': false,
+      'opus': false,
+      'wav': true,
+      'aiff': true,
+    };
+
+    for (final entry in expectedLossless.entries) {
+      test('Detect lossless for ${entry.key.toUpperCase()}', () {
+        final path = 'test/assets/01 TempleOS Hymn Risen (Remix).${entry.key}';
+        if (!File(path).existsSync()) {
+          markTestSkipped('Missing asset: $path');
+          return;
+        }
+
+        final file = TagLibFile.open(path);
+        expect(file, isNotNull);
+        if (file != null) {
+          print('${entry.key.toUpperCase()} isLossless: ${file.isLossless}');
+          expect(file.isLossless, equals(entry.value));
+          expect(file.audioInfo.isLossless, equals(file.isLossless));
+          file.close();
+        }
+      });
+    }
+
+    test('M4A resolves lossless from its codec', () {
+      final file = TagLibFile.open(
+        'test/assets/01 TempleOS Hymn Risen (Remix).m4a',
+      );
+      expect(file, isNotNull);
+      if (file != null) {
+        // The container holds either AAC (lossy) or ALAC (lossless), so the
+        // verdict must agree with the codec reported by [format].
+        print('M4A format: ${file.format}, isLossless: ${file.isLossless}');
+        switch (file.format) {
+          case 'ALAC':
+            expect(file.isLossless, isTrue);
+          case 'AAC':
+            expect(file.isLossless, isFalse);
+          default:
+            expect(file.isLossless, isNull);
+        }
+        file.close();
+      }
+    });
+  });
+
+  group('TagLib Front Cover', () {
+    test('frontCover matches the picture list result', () {
+      final file = TagLibFile.open(
+        'test/assets/01 TempleOS Hymn Risen (Remix).mp3',
+      );
+      expect(file, isNotNull);
+      if (file != null) {
+        final frontCover = file.coverData;
+        final pictures = file.pictures;
+
+        if (pictures.isEmpty) {
+          expect(frontCover, isNull);
+        } else {
+          expect(frontCover, isNotNull);
+          print('Front cover: ${frontCover!.length} bytes');
+          final expected = pictures.firstWhere(
+            (picture) => picture.pictureType == 'Front Cover',
+            orElse: () => pictures.first,
+          );
+          expect(frontCover, equals(expected.bytes));
+        }
+        file.close();
+      }
+    });
+
+    test('frontCover is repeatable', () {
+      final file = TagLibFile.open(
+        'test/assets/01 TempleOS Hymn Risen (Remix).flac',
+      );
+      expect(file, isNotNull);
+      if (file != null) {
+        // The native side caches then releases the bytes per call, so a second
+        // read must return the same data rather than null or a truncated buffer.
+        expect(file.coverData, equals(file.coverData));
+        file.close();
+      }
+    });
+  });
+
   group('TagLib Metadata Modifying', () {
     late Directory tempDir;
     late File tempFile;

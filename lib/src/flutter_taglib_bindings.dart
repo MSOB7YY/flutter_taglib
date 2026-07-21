@@ -137,8 +137,30 @@ ffi.Pointer<ffi.Char> taglib_bridge_get_bitrate_mode(
   return generated.taglib_bridge_get_bitrate_mode(file);
 }
 
+ffi.Pointer<ffi.Char> taglib_bridge_get_format(
+  ffi.Pointer<TagLibBridgeFile> file,
+) {
+  return generated.taglib_bridge_get_format(file);
+}
+
+int taglib_bridge_is_lossless(ffi.Pointer<TagLibBridgeFile> file) {
+  return generated.taglib_bridge_is_lossless(file);
+}
+
 int taglib_bridge_has_cover(ffi.Pointer<TagLibBridgeFile> file) {
   return generated.taglib_bridge_has_cover(file);
+}
+
+int taglib_bridge_front_cover_size(ffi.Pointer<TagLibBridgeFile> file) {
+  return generated.taglib_bridge_front_cover_size(file);
+}
+
+int taglib_bridge_front_cover_data(
+  ffi.Pointer<TagLibBridgeFile> file,
+  ffi.Pointer<ffi.Uint8> buffer,
+  int bufferSize,
+) {
+  return generated.taglib_bridge_front_cover_data(file, buffer, bufferSize);
 }
 
 ffi.Pointer<TagLibBridgePictures> taglib_bridge_pictures_create() {

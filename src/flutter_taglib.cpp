@@ -12,14 +12,44 @@
 #include <flacfile.h>
 #include <ogg/vorbis/vorbisfile.h>
 #include <ogg/opus/opusfile.h>
+#include <ogg/speex/speexfile.h>
+#include <ogg/flac/oggflacfile.h>
 #include <mp4/mp4file.h>
+#include <mp4/mp4properties.h>
 #include <riff/wav/wavfile.h>
+#include <riff/aiff/aifffile.h>
+#include <ape/apefile.h>
+#include <wavpack/wavpackfile.h>
+#include <mpc/mpcfile.h>
+#include <trueaudio/trueaudiofile.h>
+#include <asf/asffile.h>
+#include <dsf/dsffile.h>
+#include <dsdiff/dsdifffile.h>
+#include <mod/modfile.h>
+#include <s3m/s3mfile.h>
+#include <it/itfile.h>
+#include <xm/xmfile.h>
 #include <tpropertymap.h>
 
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <cstring>
+#include <cctype>
+#include <typeinfo>
+#include <typeindex>
+
+// Itanium ABI toolchains (Android, Apple, Linux) mangle typeid names and need
+// cxxabi.h to demangle them. MSVC-targeting compilers, including clang on
+// Windows, already report a readable name and ship no cxxabi.h.
+#if !defined(_MSC_VER) && defined(__has_include)
+#if __has_include(<cxxabi.h>)
+#include <cxxabi.h>
+#include <cstdlib>
+#define FLUTTER_TAGLIB_HAS_CXA_DEMANGLE 1
+#endif
+#endif
 
 #include <cstdio>
 #include <iostream>
@@ -189,6 +219,9 @@ struct TagLibBridgeFile {
     std::string cachedComment;
     std::string cachedCoverMime;
     std::string cachedBitrateMode;
+    std::string cachedFormat;
+    bool formatResolved = false;
+    TagLib::ByteVector cachedFrontCover;
 };
 
 struct TagLibBridgePictures {
@@ -237,6 +270,122 @@ static const TagLib::VariantMap* picture_at(const TagLibBridgePictures* pictures
         return nullptr;
     }
     return &pictures->cachedPictures[static_cast<size_t>(index)];
+}
+
+// Returns the runtime class name of a TagLib::File subclass, e.g.
+// "TagLib::FLAC::File". MSVC already reports a readable name; the Itanium ABI
+// (Clang/GCC on Android, Apple and Linux) reports a mangled name that needs
+// demangling. Returns an empty string when the name is unavailable.
+static std::string runtime_class_name(const TagLib::File* filePtr) {
+    if (!filePtr) return std::string();
+    const char* rawName = typeid(*filePtr).name();
+    if (!rawName) return std::string();
+
+#ifdef FLUTTER_TAGLIB_HAS_CXA_DEMANGLE
+    int status = 0;
+    char* demangled = abi::__cxa_demangle(rawName, nullptr, nullptr, &status);
+    if (status == 0 && demangled) {
+        std::string result(demangled);
+        std::free(demangled);
+        return result;
+    }
+    if (demangled) std::free(demangled);
+    return std::string();
+#else
+    return std::string(rawName);
+#endif
+}
+
+// Derives a format token from a TagLib class name for formats the explicit
+// dispatch below does not name, so newly supported TagLib formats still report
+// something useful instead of nothing. "TagLib::Shorten::File" yields "SHORTEN".
+static std::string format_token_from_class_name(const std::string& className) {
+    static const std::string fileSuffix = "::File";
+    if (className.size() <= fileSuffix.size()) return std::string();
+    if (className.compare(className.size() - fileSuffix.size(), fileSuffix.size(), fileSuffix) != 0) {
+        return std::string();
+    }
+
+    // "class TagLib::Ogg::Speex::File" -> "class TagLib::Ogg::Speex" -> "Speex"
+    std::string head = className.substr(0, className.size() - fileSuffix.size());
+    size_t separator = head.rfind("::");
+    std::string token = (separator == std::string::npos) ? head : head.substr(separator + 2);
+    if (token.empty() || token == "TagLib") return std::string();
+
+    for (auto& character : token) {
+        character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+    }
+    return token;
+}
+
+// Maps each concrete TagLib file class to its format token. Matching the exact
+// runtime type turns format detection into a single hash lookup instead of a
+// chain of dynamic_casts, and makes the order of entries irrelevant. Formats
+// whose token depends on the codec (MPEG, MP4) are resolved separately below.
+static const std::unordered_map<std::type_index, const char*>& format_token_table() {
+    static const std::unordered_map<std::type_index, const char*> table = {
+        {std::type_index(typeid(TagLib::FLAC::File)), "FLAC"},
+        {std::type_index(typeid(TagLib::Ogg::FLAC::File)), "OGGFLAC"},
+        {std::type_index(typeid(TagLib::Ogg::Vorbis::File)), "VORBIS"},
+        {std::type_index(typeid(TagLib::Ogg::Opus::File)), "OPUS"},
+        {std::type_index(typeid(TagLib::Ogg::Speex::File)), "SPEEX"},
+        {std::type_index(typeid(TagLib::RIFF::WAV::File)), "WAV"},
+        {std::type_index(typeid(TagLib::RIFF::AIFF::File)), "AIFF"},
+        {std::type_index(typeid(TagLib::APE::File)), "APE"},
+        {std::type_index(typeid(TagLib::WavPack::File)), "WAVPACK"},
+        {std::type_index(typeid(TagLib::MPC::File)), "MPC"},
+        {std::type_index(typeid(TagLib::TrueAudio::File)), "TTA"},
+        {std::type_index(typeid(TagLib::ASF::File)), "WMA"},
+        {std::type_index(typeid(TagLib::DSF::File)), "DSF"},
+        {std::type_index(typeid(TagLib::DSDIFF::File)), "DFF"},
+        {std::type_index(typeid(TagLib::Mod::File)), "MOD"},
+        {std::type_index(typeid(TagLib::S3M::File)), "S3M"},
+        {std::type_index(typeid(TagLib::IT::File)), "IT"},
+        {std::type_index(typeid(TagLib::XM::File)), "XM"},
+    };
+    return table;
+}
+
+// Tri-state verdict for taglib_bridge_is_lossless.
+enum LosslessVerdict { kLossy = 0, kLossless = 1, kLosslessUnknown = -1 };
+
+// Formats whose lossless-ness follows from the format alone. The remaining ones
+// (MP4, WAV, AIFF, WavPack, ASF) can carry either kind of stream and are
+// resolved from their audio properties instead.
+static const std::unordered_map<std::type_index, int>& lossless_table() {
+    static const std::unordered_map<std::type_index, int> table = {
+        {std::type_index(typeid(TagLib::MPEG::File)), kLossy},
+        {std::type_index(typeid(TagLib::FLAC::File)), kLossless},
+        {std::type_index(typeid(TagLib::Ogg::FLAC::File)), kLossless},
+        {std::type_index(typeid(TagLib::Ogg::Vorbis::File)), kLossy},
+        {std::type_index(typeid(TagLib::Ogg::Opus::File)), kLossy},
+        {std::type_index(typeid(TagLib::Ogg::Speex::File)), kLossy},
+        {std::type_index(typeid(TagLib::APE::File)), kLossless},
+        {std::type_index(typeid(TagLib::MPC::File)), kLossy},
+        {std::type_index(typeid(TagLib::TrueAudio::File)), kLossless},
+        // DSD stores a raw 1-bit stream; DST compression inside DFF is lossless.
+        {std::type_index(typeid(TagLib::DSF::File)), kLossless},
+        {std::type_index(typeid(TagLib::DSDIFF::File)), kLossless},
+        // Tracker formats sequence sampled instruments, so neither verdict applies.
+        {std::type_index(typeid(TagLib::Mod::File)), kLosslessUnknown},
+        {std::type_index(typeid(TagLib::S3M::File)), kLosslessUnknown},
+        {std::type_index(typeid(TagLib::IT::File)), kLosslessUnknown},
+        {std::type_index(typeid(TagLib::XM::File)), kLosslessUnknown},
+    };
+    return table;
+}
+
+// AIFF-C compression identifiers that store PCM verbatim. Every other AIFF-C
+// compression in common use (ima4, ulaw, MAC3/MAC6, GSM, QDMC, mp3) is lossy.
+static bool is_lossless_aifc_compression(const TagLib::ByteVector& compression) {
+    static const char* const losslessTypes[] = {
+        "NONE", "sowt", "twos", "raw ", "in24", "in32",
+        "fl32", "FL32", "fl64", "FL64",
+    };
+    for (const char* type : losslessTypes) {
+        if (compression == TagLib::ByteVector(type, 4)) return true;
+    }
+    return false;
 }
 
 static TagLib::VariantMap build_picture_map(
@@ -622,6 +771,130 @@ const char* taglib_bridge_get_bitrate_mode(TagLibBridgeFile* file) {
     }
 }
 
+const char* taglib_bridge_get_format(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return nullptr;
+
+    // The format of an open file never changes, so resolve it only once.
+    if (file->formatResolved) {
+        return file->cachedFormat.empty() ? nullptr : file->cachedFormat.c_str();
+    }
+
+    try {
+        auto filePtr = file->fileRef->file();
+        if (!filePtr) return nullptr;
+
+        // The concrete TagLib::File subclass is resolved from the file contents,
+        // so this stays correct even for files with a wrong or missing extension.
+        const std::type_index fileType(typeid(*filePtr));
+
+        if (fileType == std::type_index(typeid(TagLib::MPEG::File))) {
+            // MPEG covers layers I/II/III, so report the actual layer.
+            auto mpegProps = dynamic_cast<TagLib::MPEG::Properties*>(file->fileRef->audioProperties());
+            switch (mpegProps ? mpegProps->layer() : 3) {
+                case 1: file->cachedFormat = "MP1"; break;
+                case 2: file->cachedFormat = "MP2"; break;
+                default: file->cachedFormat = "MP3"; break;
+            }
+        } else if (fileType == std::type_index(typeid(TagLib::MP4::File))) {
+            // Distinguish lossy AAC from lossless ALAC inside the MP4 container.
+            auto mp4Props = dynamic_cast<TagLib::MP4::Properties*>(file->fileRef->audioProperties());
+            if (mp4Props && mp4Props->codec() == TagLib::MP4::Properties::AAC) {
+                file->cachedFormat = "AAC";
+            } else if (mp4Props && mp4Props->codec() == TagLib::MP4::Properties::ALAC) {
+                file->cachedFormat = "ALAC";
+            } else {
+                file->cachedFormat = "MP4";
+            }
+        } else {
+            const auto& table = format_token_table();
+            const auto match = table.find(fileType);
+            if (match != table.end()) {
+                file->cachedFormat = match->second;
+            } else {
+                // A TagLib format this bridge does not name: derive a token from
+                // the runtime class name so it still reports something useful.
+                file->cachedFormat = format_token_from_class_name(runtime_class_name(filePtr));
+            }
+        }
+
+        file->formatResolved = true;
+        return file->cachedFormat.empty() ? nullptr : file->cachedFormat.c_str();
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+int taglib_bridge_is_lossless(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return kLosslessUnknown;
+    try {
+        auto filePtr = file->fileRef->file();
+        if (!filePtr) return kLosslessUnknown;
+
+        const std::type_index fileType(typeid(*filePtr));
+        auto audioProps = file->fileRef->audioProperties();
+
+        // Containers that can hold either a lossy or a lossless stream must be
+        // resolved from the stream itself rather than from the format.
+        if (fileType == std::type_index(typeid(TagLib::MP4::File))) {
+            auto props = dynamic_cast<TagLib::MP4::Properties*>(audioProps);
+            if (!props) return kLosslessUnknown;
+            if (props->codec() == TagLib::MP4::Properties::ALAC) return kLossless;
+            if (props->codec() == TagLib::MP4::Properties::AAC) return kLossy;
+            return kLosslessUnknown;
+        }
+
+        if (fileType == std::type_index(typeid(TagLib::ASF::File))) {
+            auto props = dynamic_cast<TagLib::ASF::Properties*>(audioProps);
+            if (!props) return kLosslessUnknown;
+            switch (props->codec()) {
+                case TagLib::ASF::Properties::WMA9Lossless: return kLossless;
+                case TagLib::ASF::Properties::WMA1:
+                case TagLib::ASF::Properties::WMA2:
+                case TagLib::ASF::Properties::WMA9Pro: return kLossy;
+                default: return kLosslessUnknown;
+            }
+        }
+
+        if (fileType == std::type_index(typeid(TagLib::WavPack::File))) {
+            // WavPack has a hybrid mode, so the file itself carries the answer.
+            auto props = dynamic_cast<TagLib::WavPack::Properties*>(audioProps);
+            return props ? (props->isLossless() ? kLossless : kLossy) : kLosslessUnknown;
+        }
+
+        if (fileType == std::type_index(typeid(TagLib::RIFF::WAV::File))) {
+            auto props = dynamic_cast<TagLib::RIFF::WAV::Properties*>(audioProps);
+            if (!props) return kLosslessUnknown;
+            // WAVE format tags per RFC 2361: PCM and IEEE float store samples
+            // verbatim. EXTENSIBLE wraps a subformat TagLib does not expose, but
+            // in practice it is used for multichannel or high-bit-depth PCM.
+            switch (props->format()) {
+                case 0x0001: // WAVE_FORMAT_PCM
+                case 0x0003: // WAVE_FORMAT_IEEE_FLOAT
+                case 0xFFFE: // WAVE_FORMAT_EXTENSIBLE
+                    return kLossless;
+                case 0x0000: // unknown / unset
+                    return kLosslessUnknown;
+                default:
+                    return kLossy;
+            }
+        }
+
+        if (fileType == std::type_index(typeid(TagLib::RIFF::AIFF::File))) {
+            auto props = dynamic_cast<TagLib::RIFF::AIFF::Properties*>(audioProps);
+            if (!props) return kLosslessUnknown;
+            // Plain AIFF is always uncompressed PCM; only AIFF-C can compress.
+            if (!props->isAiffC()) return kLossless;
+            return is_lossless_aifc_compression(props->compressionType()) ? kLossless : kLossy;
+        }
+
+        const auto& table = lossless_table();
+        const auto match = table.find(fileType);
+        return match != table.end() ? match->second : kLosslessUnknown;
+    } catch (...) {
+        return kLosslessUnknown;
+    }
+}
+
 int taglib_bridge_has_cover(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
     try {
@@ -672,6 +945,52 @@ const char* taglib_bridge_get_cover_mime_type(TagLibBridgeFile* file) {
         return file->cachedCoverMime.c_str();
     } catch (...) {
         return "";
+    }
+}
+
+uint32_t taglib_bridge_front_cover_size(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
+    try {
+        file->cachedFrontCover = TagLib::ByteVector();
+
+        auto pictures = read_picture_list(file);
+        if (pictures.isEmpty()) return 0;
+
+        // Prefer an explicitly typed front cover; otherwise take the first picture,
+        // matching how embedded art is conventionally ordered.
+        const TagLib::VariantMap* selected = nullptr;
+        for (const auto& picture : pictures) {
+            auto typeVar = picture["pictureType"];
+            if (!typeVar.isEmpty() && typeVar.toString() == "Front Cover") {
+                selected = &picture;
+                break;
+            }
+        }
+        if (!selected) selected = &pictures.front();
+
+        auto dataVar = (*selected)["data"];
+        if (dataVar.isEmpty()) return 0;
+
+        file->cachedFrontCover = dataVar.toByteVector();
+        return static_cast<uint32_t>(file->cachedFrontCover.size());
+    } catch (...) {
+        file->cachedFrontCover = TagLib::ByteVector();
+        return 0;
+    }
+}
+
+int taglib_bridge_front_cover_data(TagLibBridgeFile* file, uint8_t* buffer, uint32_t buffer_size) {
+    if (!file || !buffer || buffer_size == 0) return 0;
+    try {
+        if (file->cachedFrontCover.isEmpty()) return 0;
+        uint32_t size = static_cast<uint32_t>(file->cachedFrontCover.size());
+        uint32_t toCopy = size < buffer_size ? size : buffer_size;
+        std::memcpy(buffer, file->cachedFrontCover.data(), toCopy);
+        // The bytes are handed off to the caller, so drop our copy right away.
+        file->cachedFrontCover = TagLib::ByteVector();
+        return 1;
+    } catch (...) {
+        return 0;
     }
 }
 

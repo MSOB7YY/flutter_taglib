@@ -10,6 +10,7 @@ A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart F
 
 > [!NOTE]
 > This package uses a hybrid platform strategy:
+>
 > - **Windows/Linux/Android** use prebuilt binaries that are downloaded on demand and cached locally, so host apps do not need to compile TagLib during every build.
 > - **iOS/macOS** continue to rely on native platform builds.
 
@@ -21,7 +22,7 @@ A high-performance, feature-rich Flutter plugin wrapping **TagLib** using Dart F
 - **Full Tag Editing**: Read and modify standard tag fields: Title, Artist, Album, Genre, Year, Track Number, and Comment.
 - **Album Art (Cover) Management**:
   - Check if a file contains cover art (`hasCover`).
-  - Retrieve cover art bytes (`coverData`) and its MIME type (`coverMimeType`).
+  - Retrieve cover art bytes (`coverData`) and its MIME type (`coverMimeType`), or just the front cover bytes (`frontCover`).
   - Set or update cover art, or remove it entirely.
 - **Audio Technical Properties**: Extract read-only properties:
   - Duration (as Dart `Duration`)
@@ -91,6 +92,8 @@ void readMetadata(String filePath) {
     print('Comment:     ${file.comment}');
 
     // Read audio properties
+    print('Format:       ${file.format}'); // 'MP3', 'FLAC', 'OPUS', 'AAC', ...
+    print('Lossless:     ${file.isLossless}'); // true, false, or null if unknown
     print('Duration:     ${file.duration}');
     print('Bitrate:      ${file.bitrate} kbps');
     print('Bitrate Mode: ${file.bitrateMode}'); // 'CBR', 'VBR', or 'Unknown'
@@ -304,6 +307,7 @@ if (result != null && result.files.isNotEmpty) {
 ```
 
 #### Option A: Automatic Permission Requests (`openAsync` & `requestWriteAccess`)
+
 Use `openAsync` with `writeAccess: true` to trigger the system prompt when necessary. If you already have a `TagLibFile` open in read-only mode, you can request write access before saving:
 
 ```dart
@@ -320,11 +324,12 @@ file.close();
 ```
 
 #### Option B: Opening File Descriptors (`openFd`)
+
 If you obtain a file descriptor through the Android Storage Access Framework (SAF) or MediaStore, you can pass the file descriptor directly to `TagLibFile.openFd`:
 
 ```dart
 // E.g., obtained via MethodChannel or a document picker in Android
-int fd = androidFileDescriptor; 
+int fd = androidFileDescriptor;
 final file = TagLibFile.openFd(fd, path: filePath);
 
 if (file != null) {
@@ -360,7 +365,7 @@ if (file != null) {
 
     print('Artists: $artists');
     print('Lyrics: $lyrics');
-    
+
     // Print all available properties in the file
     props.forEach((key, values) {
       print('$key: $values');
@@ -429,6 +434,7 @@ platforms:
 ## Native Assets Compilation Requirements
 
 Because iOS/macOS still compile native code during the platform build:
+
 - **iOS/macOS**: Requires Xcode.
 
 For **Windows/Linux/Android app builds**, the plugin downloads prebuilt
