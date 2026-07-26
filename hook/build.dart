@@ -8,7 +8,7 @@ import 'package:hooks/hooks.dart';
 
 const String _prebuiltReleaseTag = 'desktop-binaries-v1.5.1';
 const String _githubDownloadBaseUrl =
-    'https://github.com/axel10/flutter_taglib/releases/download/$_prebuiltReleaseTag';
+    'https://github.com/MSOB7YY/flutter_taglib/releases/download/$_prebuiltReleaseTag';
 
 void main(List<String> args) async {
   await build(args, (input, output) async {
@@ -130,7 +130,7 @@ void main(List<String> args) async {
     }
 
     // --- Online Fetch TagLib 2.3 & utfcpp ---
-    final taglibVersion = '2.3';
+    final taglibVersion = '2.3.1';
     final utfcppVersion = '4.0.9';
 
     final cacheDir = Directory('.dart_tool/flutter_taglib');
@@ -151,7 +151,7 @@ void main(List<String> args) async {
       // 1. Download TagLib 2.3
       final taglibZip = File('${cacheDir.path}/taglib.zip');
       final taglibUrl =
-          'https://github.com/taglib/taglib/archive/refs/tags/v$taglibVersion.zip';
+          'https://github.com/MSOB7YY/taglib/archive/refs/tags/v$taglibVersion.zip';
       print('Downloading TagLib from $taglibUrl...');
       await _downloadFile(taglibUrl, taglibZip);
 
