@@ -1,3 +1,6 @@
+## 1.5.2
+* fix: cover not extracted from mp4 in rare cases
+
 ## 1.5.1
 * fix(android): remove dangerous JNI FindClass call in C++ taglib_bridge_open
 
