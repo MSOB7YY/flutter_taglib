@@ -1,3 +1,6 @@
+## 1.5.3
+* core: improve format names for matroska container
+
 ## 1.5.2
 * fix: cover not extracted from mp4 in rare cases
 
