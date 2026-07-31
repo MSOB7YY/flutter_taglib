@@ -857,6 +857,39 @@ int taglib_bridge_get_channels(TagLibBridgeFile* file) {
     }
 }
 
+int taglib_bridge_get_bits_per_sample(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
+    try {
+        auto props = file->fileRef->audioProperties();
+        if (!props) return 0;
+
+        // TagLib's AudioProperties base class does not expose bit depth, so it
+        // is read from each concrete Properties subclass that has one. Lossy
+        // codecs have no fixed sample size, so MP4 and ASF — whose containers
+        // declare a nominal value even for AAC/WMA — only report their
+        // lossless codecs. Matroska needs no gate: its BitDepth element is
+        // simply absent for lossy tracks.
+        if (auto p = dynamic_cast<TagLib::FLAC::Properties*>(props)) return p->bitsPerSample();
+        if (auto p = dynamic_cast<TagLib::MP4::Properties*>(props)) {
+            return p->codec() == TagLib::MP4::Properties::ALAC ? p->bitsPerSample() : 0;
+        }
+        if (auto p = dynamic_cast<TagLib::ASF::Properties*>(props)) {
+            return p->codec() == TagLib::ASF::Properties::WMA9Lossless ? p->bitsPerSample() : 0;
+        }
+        if (auto p = dynamic_cast<TagLib::RIFF::WAV::Properties*>(props)) return p->bitsPerSample();
+        if (auto p = dynamic_cast<TagLib::RIFF::AIFF::Properties*>(props)) return p->bitsPerSample();
+        if (auto p = dynamic_cast<TagLib::APE::Properties*>(props)) return p->bitsPerSample();
+        if (auto p = dynamic_cast<TagLib::WavPack::Properties*>(props)) return p->bitsPerSample();
+        if (auto p = dynamic_cast<TagLib::TrueAudio::Properties*>(props)) return p->bitsPerSample();
+        if (auto p = dynamic_cast<TagLib::DSF::Properties*>(props)) return p->bitsPerSample();
+        if (auto p = dynamic_cast<TagLib::DSDIFF::Properties*>(props)) return p->bitsPerSample();
+        if (auto p = dynamic_cast<TagLib::Matroska::Properties*>(props)) return p->bitsPerSample();
+        return 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
 const char* taglib_bridge_get_bitrate_mode(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull() || !file->fileRef->audioProperties()) return "";
     try {

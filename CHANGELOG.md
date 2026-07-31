@@ -1,3 +1,6 @@
+## 1.5.4
+* feat: add `TagLibFile.bitsPerSample`
+
 ## 1.5.3
 * core: improve format names for matroska container
 
