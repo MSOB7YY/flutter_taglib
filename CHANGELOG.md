@@ -1,3 +1,6 @@
+## 1.5.5
+* core: improve tags extraction for wma/asf formats
+
 ## 1.5.4
 * feat: add `TagLibFile.bitsPerSample`
 
