@@ -837,6 +837,11 @@ static bool apple_fetch_http_range(
             return false;
         }
 
+        if (offset > 0 && statusCode == 200) {
+            out_error = "Server does not support HTTP Range requests (returned 200 OK for offset > 0)";
+            return false;
+        }
+
         if (parsedTotalLength > 0) {
             out_total_length = parsedTotalLength;
         } else if (expectedContentLength > 0 && statusCode == 200) {
@@ -844,8 +849,12 @@ static bool apple_fetch_http_range(
         }
 
         if (resData && [resData length] > 0) {
+            NSUInteger actualLen = [resData length];
+            if (statusCode == 200 && length > 0 && actualLen > (NSUInteger)length) {
+                actualLen = (NSUInteger)length;
+            }
             const uint8_t* bytes = (const uint8_t*)[resData bytes];
-            out_data.assign(bytes, bytes + [resData length]);
+            out_data.assign(bytes, bytes + actualLen);
         }
         return true;
     }
@@ -948,6 +957,14 @@ static bool android_fetch_http_range(
         return false;
     }
 
+    if (offset > 0 && respCode == 200) {
+        if (disconnectMethod) env->CallVoidMethod(jConn, disconnectMethod);
+        env->DeleteLocalRef(connClass);
+        env->DeleteLocalRef(jConn);
+        out_error = "Server does not support HTTP Range requests (returned 200 OK for offset > 0)";
+        return false;
+    }
+
     jstring jCrKey = env->NewStringUTF("Content-Range");
     jstring jCrVal = (jstring)env->CallObjectMethod(jConn, getHeaderFieldMethod, jCrKey);
     env->DeleteLocalRef(jCrKey);
@@ -995,7 +1012,14 @@ static bool android_fetch_http_range(
     jbyteArray jChunk = env->NewByteArray(chunkBufSize);
 
     while (true) {
-        jint bytesRead = env->CallIntMethod(jInStream, readMethod, jChunk, 0, chunkBufSize);
+        if (respCode == 200 && length > 0 && out_data.size() >= (size_t)length) {
+            break;
+        }
+        int toRead = chunkBufSize;
+        if (respCode == 200 && length > 0 && out_data.size() + toRead > (size_t)length) {
+            toRead = (int)((size_t)length - out_data.size());
+        }
+        jint bytesRead = env->CallIntMethod(jInStream, readMethod, jChunk, 0, toRead);
         if (bytesRead <= 0) break;
 
         jbyte* chunkBytes = env->GetByteArrayElements(jChunk, nullptr);
@@ -1018,7 +1042,7 @@ static bool android_fetch_http_range(
 }
 #endif
 
-#ifdef _WIN32
+#if defined(_WIN32)
 static bool windows_fetch_http_range(
     const std::string& url,
     const std::map<std::string, std::string>& headers,
@@ -1029,16 +1053,18 @@ static bool windows_fetch_http_range(
     std::vector<uint8_t>& out_data,
     std::string& out_error
 ) {
-    int timeout = timeout_ms > 0 ? timeout_ms : 15000;
-
+    std::wstring wUrl;
     int wlen = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, NULL, 0);
-    if (wlen <= 0) { out_error = "Invalid UTF-8 URL"; return false; }
-    std::wstring wUrl(wlen, 0);
-    MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, &wUrl[0], wlen);
+    if (wlen > 0) {
+        wUrl.resize(wlen - 1);
+        MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, &wUrl[0], wlen);
+    } else {
+        out_error = "URL UTF-8 conversion failed";
+        return false;
+    }
 
-    URL_COMPONENTS urlComp = { 0 };
+    URL_COMPONENTS urlComp = {0};
     urlComp.dwStructSize = sizeof(urlComp);
-    urlComp.dwSchemeLength = (DWORD)-1;
     urlComp.dwHostNameLength = (DWORD)-1;
     urlComp.dwUrlPathLength = (DWORD)-1;
     urlComp.dwExtraInfoLength = (DWORD)-1;
@@ -1050,6 +1076,7 @@ static bool windows_fetch_http_range(
 
     std::wstring host(urlComp.lpszHostName, urlComp.dwHostNameLength);
     std::wstring path(urlComp.lpszUrlPath, urlComp.dwUrlPathLength + urlComp.dwExtraInfoLength);
+
     bool isHttps = (urlComp.nScheme == INTERNET_SCHEME_HTTPS);
 
     HINTERNET hSession = WinHttpOpen(L"flutter_taglib/1.0",
@@ -1061,6 +1088,7 @@ static bool windows_fetch_http_range(
         return false;
     }
 
+    int timeout = timeout_ms > 0 ? timeout_ms : 15000;
     WinHttpSetTimeouts(hSession, timeout, timeout, timeout, timeout);
 
     HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), urlComp.nPort, 0);
@@ -1081,17 +1109,17 @@ static bool windows_fetch_http_range(
     }
 
     if (offset >= 0 && length > 0) {
-        wchar_t rangeBuf[128];
-        swprintf_s(rangeBuf, 128, L"Range: bytes=%lld-%lld\r\n", (long long)offset, (long long)(offset + length - 1));
-        WinHttpAddRequestHeaders(hRequest, rangeBuf, (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+        int64_t end = offset + length - 1;
+        std::wstring rangeHeader = L"Range: bytes=" + std::to_wstring(offset) + L"-" + std::to_wstring(end) + L"\r\n";
+        WinHttpAddRequestHeaders(hRequest, rangeHeader.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     }
 
     for (const auto& kv : headers) {
+        std::wstring wk, wv;
         int klen = MultiByteToWideChar(CP_UTF8, 0, kv.first.c_str(), -1, NULL, 0);
+        if (klen > 0) { wk.resize(klen - 1); MultiByteToWideChar(CP_UTF8, 0, kv.first.c_str(), -1, &wk[0], klen); }
         int vlen = MultiByteToWideChar(CP_UTF8, 0, kv.second.c_str(), -1, NULL, 0);
-        std::wstring wk(klen, 0), wv(vlen, 0);
-        MultiByteToWideChar(CP_UTF8, 0, kv.first.c_str(), -1, &wk[0], klen);
-        MultiByteToWideChar(CP_UTF8, 0, kv.second.c_str(), -1, &wv[0], vlen);
+        if (vlen > 0) { wv.resize(vlen - 1); MultiByteToWideChar(CP_UTF8, 0, kv.second.c_str(), -1, &wv[0], vlen); }
         std::wstring wHeader = wk.c_str() + std::wstring(L": ") + wv.c_str() + L"\r\n";
         WinHttpAddRequestHeaders(hRequest, wHeader.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     }
@@ -1118,6 +1146,14 @@ static bool windows_fetch_http_range(
         return false;
     }
 
+    if (offset > 0 && statusCode == 200) {
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        out_error = "Server does not support HTTP Range requests (returned 200 OK for offset > 0)";
+        return false;
+    }
+
     DWORD crLen = 0;
     WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_CUSTOM, L"Content-Range", NULL, &crLen, WINHTTP_NO_HEADER_INDEX);
     if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && crLen > 0) {
@@ -1139,14 +1175,22 @@ static bool windows_fetch_http_range(
 
     DWORD bytesAvailable = 0;
     while (WinHttpQueryDataAvailable(hRequest, &bytesAvailable) && bytesAvailable > 0) {
+        if (statusCode == 200 && length > 0 && out_data.size() >= (size_t)length) {
+            break;
+        }
+        DWORD toRead = bytesAvailable;
+        if (statusCode == 200 && length > 0 && out_data.size() + toRead > (size_t)length) {
+            toRead = (DWORD)((size_t)length - out_data.size());
+        }
         size_t currentSize = out_data.size();
-        out_data.resize(currentSize + bytesAvailable);
+        out_data.resize(currentSize + toRead);
         DWORD bytesRead = 0;
-        if (!WinHttpReadData(hRequest, &out_data[currentSize], bytesAvailable, &bytesRead)) {
+        if (!WinHttpReadData(hRequest, &out_data[currentSize], toRead, &bytesRead)) {
             out_data.resize(currentSize);
             break;
         }
         out_data.resize(currentSize + bytesRead);
+        if (bytesRead < toRead) break;
     }
 
     WinHttpCloseHandle(hRequest);
@@ -1157,10 +1201,23 @@ static bool windows_fetch_http_range(
 #endif
 
 #if !defined(__APPLE__) && !defined(__ANDROID__) && !defined(_WIN32)
+struct CurlWriteContext {
+    std::vector<uint8_t>* vec;
+    int64_t maxLen;
+    bool is200;
+};
+
 static size_t curl_write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t total = size * nmemb;
-    std::vector<uint8_t>* vec = static_cast<std::vector<uint8_t>*>(userp);
-    vec->insert(vec->end(), static_cast<const uint8_t*>(contents), static_cast<const uint8_t*>(contents) + total);
+    auto ctx = static_cast<CurlWriteContext*>(userp);
+    if (ctx->is200 && ctx->maxLen > 0 && ctx->vec->size() >= (size_t)ctx->maxLen) {
+        return total; // skip further writing
+    }
+    size_t toWrite = total;
+    if (ctx->is200 && ctx->maxLen > 0 && ctx->vec->size() + toWrite > (size_t)ctx->maxLen) {
+        toWrite = (size_t)ctx->maxLen - ctx->vec->size();
+    }
+    ctx->vec->insert(ctx->vec->end(), static_cast<const uint8_t*>(contents), static_cast<const uint8_t*>(contents) + toWrite);
     return total;
 }
 
@@ -1205,12 +1262,14 @@ static bool curl_fetch_http_range(
         chunk = curl_slist_append(chunk, h.c_str());
     }
 
+    CurlWriteContext writeCtx = { &out_data, length, false };
+
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, (long)(timeout_ms > 0 ? timeout_ms : 15000));
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, (long)(timeout_ms > 0 ? timeout_ms : 15000));
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out_data);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeCtx);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_header_callback);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &out_total_length);
 
@@ -1227,6 +1286,7 @@ static bool curl_fetch_http_range(
     CURLcode res = curl_easy_perform(curl);
     long http_code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    writeCtx.is200 = (http_code == 200);
 
     if (chunk) {
         curl_slist_free_all(chunk);
@@ -1239,6 +1299,11 @@ static bool curl_fetch_http_range(
     }
     if (http_code != 200 && http_code != 206) {
         out_error = "HTTP status " + std::to_string(http_code);
+        return false;
+    }
+
+    if (offset > 0 && http_code == 200) {
+        out_error = "Server does not support HTTP Range requests (returned 200 OK for offset > 0)";
         return false;
     }
 
