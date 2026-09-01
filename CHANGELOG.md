@@ -1,3 +1,7 @@
+## 1.5.7
+* fix(android): `UnsupportedError` on `armeabi-v7a` devices
+* fix(android): apps with `minSdk` below 24 now build from source, since the published binaries import libc symbols older devices do not export
+
 ## 1.5.5
 * core: improve tags extraction for wma/asf formats
 

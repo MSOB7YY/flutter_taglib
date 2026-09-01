@@ -441,6 +441,11 @@ For **Windows/Linux/Android app builds**, the plugin downloads prebuilt
 libraries instead of compiling TagLib locally. Repository maintainers can
 refresh those binaries through `.github/workflows/build-native-assets.yml`.
 
+The published Android binaries are linked against API 24. Apps that set a
+lower `minSdk` automatically fall back to a source build (which needs the
+Android NDK toolchain), because those libraries would fail to `dlopen()` on
+older devices.
+
 If you maintain the binaries yourself and need to regenerate them from
 source, you may still need the necessary build tools/Android NDK toolchain in your build environment.
 
