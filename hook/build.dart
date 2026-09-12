@@ -320,6 +320,9 @@ void main(List<String> args) async {
       flags: [
         if (!input.config.code.targetOS.toString().contains('windows'))
           '-fvisibility=hidden',
+        if (input.config.code.targetOS.toString().contains('android')) ...[
+          '-Wl,-z,max-page-size=16384',
+        ],
         if (targetOSStr == 'macos' || targetOSStr == 'ios') ...[
           '-x',
           'objective-c++',
