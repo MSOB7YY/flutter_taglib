@@ -45,7 +45,7 @@ void main(List<String> args) async {
             : 'libflutter_taglib_native.so';
 
         final cacheDir = Directory.fromUri(
-          input.packageRoot.resolve('.dart_tool/flutter_taglib/prebuilt/$_prebuiltReleaseTag/'),
+          input.packageRoot.resolve('.dart_tool/flutter_taglib/prebuilt/$_prebuiltReleaseTag/$targetOSStr-$archStr/'),
         );
         if (!cacheDir.existsSync()) {
           cacheDir.createSync(recursive: true);
@@ -54,7 +54,7 @@ void main(List<String> args) async {
         final prebuiltFile = File.fromUri(
           cacheDir.uri.resolve(localFileName),
         );
-        if (!prebuiltFile.existsSync()) {
+        if (!prebuiltFile.existsSync() || prebuiltFile.lengthSync() == 0) {
           final url = '$_githubDownloadBaseUrl/$remoteFileName';
           print('flutter_taglib: Downloading prebuilt binary from $url...');
           await _downloadFile(url, prebuiltFile);
@@ -95,7 +95,7 @@ void main(List<String> args) async {
         final localFileName = 'libflutter_taglib_native.so';
 
         final cacheDir = Directory.fromUri(
-          input.packageRoot.resolve('.dart_tool/flutter_taglib/prebuilt/$_prebuiltReleaseTag/'),
+          input.packageRoot.resolve('.dart_tool/flutter_taglib/prebuilt/$_prebuiltReleaseTag/$abi/'),
         );
         if (!cacheDir.existsSync()) {
           cacheDir.createSync(recursive: true);
@@ -104,7 +104,7 @@ void main(List<String> args) async {
         final prebuiltFile = File.fromUri(
           cacheDir.uri.resolve(localFileName),
         );
-        if (!prebuiltFile.existsSync()) {
+        if (!prebuiltFile.existsSync() || prebuiltFile.lengthSync() == 0) {
           final url = '$_githubDownloadBaseUrl/$remoteFileName';
           print('flutter_taglib: Downloading prebuilt Android binary from $url...');
           await _downloadFile(url, prebuiltFile);
@@ -496,6 +496,7 @@ String? _mapArchitectureToAndroidAbi(String archStr) {
 }
 
 Future<void> _downloadFile(String url, File targetFile) async {
+  final tempFile = File('${targetFile.path}.tmp');
   final client = HttpClient();
   try {
     final request = await client.getUrl(Uri.parse(url));
@@ -504,9 +505,21 @@ Future<void> _downloadFile(String url, File targetFile) async {
       throw Exception('Failed to download from $url: ${response.statusCode}');
     }
     final bytes = await response.fold<List<int>>([], (p, e) => p..addAll(e));
-    await targetFile.writeAsBytes(bytes);
+    if (bytes.isEmpty) {
+      throw Exception('Downloaded file is empty from $url');
+    }
+    await tempFile.writeAsBytes(bytes);
+    if (targetFile.existsSync()) {
+      targetFile.deleteSync();
+    }
+    tempFile.renameSync(targetFile.path);
   } finally {
     client.close();
+    if (tempFile.existsSync()) {
+      try {
+        tempFile.deleteSync();
+      } catch (_) {}
+    }
   }
 }
 

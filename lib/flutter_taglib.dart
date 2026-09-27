@@ -153,7 +153,7 @@ class TagLibFile {
 
   /// Returns `true` if the native TagLib library is supported and successfully loaded.
   static bool get isSupported {
-    if (_isSupportedCached != null) return _isSupportedCached!;
+    if (_isSupportedCached == true) return true;
     try {
       // `taglib_bridge_close(nullptr)` is a no-op in the native bridge, so this
       // lets us verify symbol availability without depending on filesystem access.
@@ -161,14 +161,14 @@ class TagLibFile {
       _isSupportedCached = true;
       _lastSupportProbeError = null;
       _lastSupportProbeStackTrace = null;
+      return true;
     } catch (e, stackTrace) {
       _logger.warning('flutter_taglib support probe failed: $e');
       debugPrint('[flutter_taglib] support probe failed: $e');
       _lastSupportProbeError = e;
       _lastSupportProbeStackTrace = stackTrace;
-      _isSupportedCached = false;
+      return false;
     }
-    return _isSupportedCached!;
   }
 
   /// Collects runtime diagnostics to help debug platform support issues.
