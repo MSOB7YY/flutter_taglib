@@ -1,3 +1,12 @@
+## 1.6.0
+* Added remote HTTP/HTTPS stream tag reading support with `TagLib.openUrl` and `TagLib.openUrlAsync`.
+* Implemented cross-platform native HTTP streaming with HTTP Range support (Apple URLSession, Android HttpURLConnection, Windows WinHttp, Linux libcurl) to read tags without full file downloads.
+* Added 16KB page size alignment for Android dynamic libraries (Android 15+ compatibility).
+* Isolated prebuilt binary download cache directories by ABI/arch to prevent collisions during multi-ABI (`--split-per-abi`) builds.
+* Implemented atomic downloads with non-empty validation for native prebuilt assets.
+* Improved `isSupported` probe logic to prevent permanently caching `false` before native library initialization.
+* Fixed Linux native build header paths and cURL symbol collision.
+
 ## 1.5.2
 * readBatchAsync enables image extraction option
 
