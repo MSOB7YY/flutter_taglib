@@ -166,6 +166,14 @@ ffi.Pointer<ffi.Char> taglib_bridge_get_format(
   return generated.taglib_bridge_get_format(file);
 }
 
+int taglib_bridge_get_format_bit_depth(ffi.Pointer<TagLibBridgeFile> file) {
+  return generated.taglib_bridge_get_bit_depth(file);
+}
+
+int taglib_bridge_get_bit_depth(ffi.Pointer<TagLibBridgeFile> file) {
+  return generated.taglib_bridge_get_bit_depth(file);
+}
+
 int taglib_bridge_is_lossless(ffi.Pointer<TagLibBridgeFile> file) {
   return generated.taglib_bridge_is_lossless(file);
 }

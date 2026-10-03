@@ -278,6 +278,9 @@ struct TagLibBridgeFile {
     int cachedLossless = -1;
     bool losslessResolved = false;
 
+    int cachedBitDepth = 0;
+    bool bitDepthResolved = false;
+
     int cachedHasCover = -1;
     bool hasCoverResolved = false;
 
@@ -286,6 +289,8 @@ struct TagLibBridgeFile {
     void invalidateCaches() {
         formatResolved = false;
         losslessResolved = false;
+        bitDepthResolved = false;
+        cachedBitDepth = 0;
         hasCoverResolved = false;
         cachedFrontCover = TagLib::ByteVector();
     }
@@ -1808,6 +1813,48 @@ const char* taglib_bridge_get_format(TagLibBridgeFile* file) {
         return file->cachedFormat.empty() ? nullptr : file->cachedFormat.c_str();
     } catch (...) {
         return nullptr;
+    }
+}
+
+int taglib_bridge_get_bit_depth(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull() || !file->fileRef->audioProperties()) return 0;
+    if (file->bitDepthResolved) return file->cachedBitDepth;
+
+    try {
+        auto audioProps = file->fileRef->audioProperties();
+        int bitDepth = 0;
+
+        if (auto props = dynamic_cast<TagLib::FLAC::Properties*>(audioProps)) {
+            bitDepth = props->bitsPerSample();
+        } else if (auto props = dynamic_cast<TagLib::RIFF::WAV::Properties*>(audioProps)) {
+            bitDepth = props->bitsPerSample();
+        } else if (auto props = dynamic_cast<TagLib::RIFF::AIFF::Properties*>(audioProps)) {
+            bitDepth = props->bitsPerSample();
+        } else if (auto props = dynamic_cast<TagLib::APE::Properties*>(audioProps)) {
+            bitDepth = props->bitsPerSample();
+        } else if (auto props = dynamic_cast<TagLib::WavPack::Properties*>(audioProps)) {
+            bitDepth = props->bitsPerSample();
+        } else if (auto props = dynamic_cast<TagLib::TrueAudio::Properties*>(audioProps)) {
+            bitDepth = props->bitsPerSample();
+        } else if (auto props = dynamic_cast<TagLib::DSF::Properties*>(audioProps)) {
+            bitDepth = props->bitsPerSample();
+        } else if (auto props = dynamic_cast<TagLib::DSDIFF::Properties*>(audioProps)) {
+            bitDepth = props->bitsPerSample();
+        } else if (auto props = dynamic_cast<TagLib::MP4::Properties*>(audioProps)) {
+            if (props->codec() == TagLib::MP4::Properties::ALAC) {
+                bitDepth = props->bitsPerSample();
+            }
+        } else if (auto props = dynamic_cast<TagLib::ASF::Properties*>(audioProps)) {
+            if (props->codec() == TagLib::ASF::Properties::WMA9Lossless) {
+                bitDepth = props->bitsPerSample();
+            }
+        }
+
+        file->cachedBitDepth = bitDepth;
+        file->bitDepthResolved = true;
+        return file->cachedBitDepth;
+    } catch (...) {
+        return 0;
     }
 }
 

@@ -169,6 +169,9 @@ external ffi.Pointer<ffi.Char> taglib_bridge_get_format(
   ffi.Pointer<TagLibBridgeFile> file,
 );
 
+@ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgeFile>)>()
+external int taglib_bridge_get_bit_depth(ffi.Pointer<TagLibBridgeFile> file);
+
 /// Whether the audio is losslessly encoded.
 /// Returns 1 for lossless, 0 for lossy, and -1 when it cannot be determined.
 @ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgeFile>)>()

@@ -80,6 +80,8 @@ class BatchTagMetadata {
     required this.bitrate,
     required this.sampleRate,
     required this.channels,
+    this.bitDepth,
+    this.format = '',
     required this.hasCover,
     this.coverData,
     required this.success,
@@ -98,6 +100,8 @@ class BatchTagMetadata {
   final int bitrate;
   final int sampleRate;
   final int channels;
+  final int? bitDepth;
+  final String format;
   final bool hasCover;
   final Uint8List? coverData;
   final bool success;
@@ -835,6 +839,8 @@ class TagLibFile {
       bitrate: (item['bitrate'] as int?) ?? 0,
       sampleRate: (item['sampleRate'] as int?) ?? 0,
       channels: (item['channels'] as int?) ?? 0,
+      bitDepth: item['bitDepth'] as int?,
+      format: (item['format'] as String?) ?? '',
       hasCover: item['hasCover'] == true,
       coverData: item['coverData'] as Uint8List?,
       success: item['success'] == true,
@@ -1131,6 +1137,14 @@ class TagLibFile {
     return result == 1;
   }
 
+  /// The audio bit depth (bits per sample) for lossless formats (e.g. 16, 24, 32),
+  /// or `null` if not applicable, lossy, or undetermined.
+  int? get bitDepth {
+    _checkClosed();
+    final result = bindings.taglib_bridge_get_bit_depth(_handle);
+    return result > 0 ? result : null;
+  }
+
   /// Detailed audio properties of the file.
   AudioInfo get audioInfo {
     _checkClosed();
@@ -1142,6 +1156,7 @@ class TagLibFile {
       bitrateMode: bitrateMode,
       sampleRate: sampleRate,
       channels: channels,
+      bitDepth: bitDepth,
     );
   }
 
@@ -1595,6 +1610,9 @@ class AudioInfo {
   /// The number of channels.
   final int channels;
 
+  /// The audio bit depth (bits per sample) for lossless formats, or `null`.
+  final int? bitDepth;
+
   /// Creates an [AudioInfo] instance representing detailed audio properties.
   AudioInfo({
     required this.format,
@@ -1604,11 +1622,12 @@ class AudioInfo {
     required this.bitrateMode,
     required this.sampleRate,
     required this.channels,
+    this.bitDepth,
   });
 
   @override
   String toString() =>
-      'AudioInfo(format: $format, isLossless: $isLossless, duration: $duration, bitrate: $bitrate kbps, bitrateMode: $bitrateMode, sampleRate: $sampleRate Hz, channels: $channels)';
+      'AudioInfo(format: $format, isLossless: $isLossless, duration: $duration, bitrate: $bitrate kbps, bitrateMode: $bitrateMode, sampleRate: $sampleRate Hz, channels: $channels, bitDepth: $bitDepth)';
 }
 
 /// Dummy class used by Flutter platform registration for Dart-only FFI platforms
@@ -1770,6 +1789,10 @@ Map<String, dynamic> _readSingleFileMetadataMap(
       final bitrate = bindings.taglib_bridge_get_bitrate(handle);
       final sampleRate = bindings.taglib_bridge_get_samplerate(handle);
       final channels = bindings.taglib_bridge_get_channels(handle);
+      final bitDepthVal = bindings.taglib_bridge_get_bit_depth(handle);
+      final bitDepth = bitDepthVal > 0 ? bitDepthVal : null;
+      final formatPtr = bindings.taglib_bridge_get_format(handle);
+      final format = formatPtr != ffi.nullptr ? formatPtr.cast<Utf8>().toDartString() : '';
       final hasCover = bindings.taglib_bridge_has_cover(handle) != 0;
 
       Uint8List? coverData;
@@ -1807,6 +1830,8 @@ Map<String, dynamic> _readSingleFileMetadataMap(
         'bitrate': bitrate,
         'sampleRate': sampleRate,
         'channels': channels,
+        'bitDepth': bitDepth,
+        'format': format,
         'hasCover': hasCover,
         'coverData': coverData,
         'success': true,

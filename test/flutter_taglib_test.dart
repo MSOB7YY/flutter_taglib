@@ -28,6 +28,8 @@ void main() {
         expect(file.audioInfo.duration, equals(file.duration));
         expect(file.audioInfo.bitrate, equals(file.bitrate));
         expect(file.audioInfo.bitrateMode, equals(file.bitrateMode));
+        expect(file.bitDepth, isNull);
+        expect(file.audioInfo.bitDepth, isNull);
         file.close();
       }
     });
@@ -45,6 +47,8 @@ void main() {
         expect(file.artist, isNotEmpty);
         expect(file.bitrateMode, equals('VBR'));
         expect(file.audioInfo.bitrateMode, equals('VBR'));
+        expect(file.bitDepth, equals(16));
+        expect(file.audioInfo.bitDepth, equals(16));
         file.close();
       }
     });
@@ -80,6 +84,8 @@ void main() {
         expect(file.title, isNotEmpty);
         expect(file.bitrateMode, equals('CBR'));
         expect(file.audioInfo.bitrateMode, equals('CBR'));
+        expect(file.bitDepth, equals(16));
+        expect(file.audioInfo.bitDepth, equals(16));
         file.close();
       }
     });
@@ -103,6 +109,8 @@ void main() {
         expect(file.duration.inSeconds, equals(3));
         expect(file.sampleRate, equals(44100));
         expect(file.channels, equals(2));
+        expect(file.bitDepth, equals(16));
+        expect(file.audioInfo.bitDepth, equals(16));
         file.close();
       }
     });
@@ -123,6 +131,8 @@ void main() {
         expect(file.genre, equals('Electronic'));
         expect(file.year, equals(2020));
         expect(file.track, equals(1));
+        expect(file.bitDepth, equals(16));
+        expect(file.audioInfo.bitDepth, equals(16));
         expect(file.duration.inSeconds, equals(3));
         expect(file.sampleRate, equals(44100));
         expect(file.channels, equals(2));

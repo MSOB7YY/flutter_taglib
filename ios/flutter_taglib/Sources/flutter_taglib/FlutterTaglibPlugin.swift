@@ -193,6 +193,17 @@ public class FlutterTaglibPlugin: NSObject, FlutterPlugin, UIDocumentPickerDeleg
       }
       activeUrls[url.path] = url
       persistBookmark(for: url)
+      do {
+        let bookmarkData = try url.bookmarkData(
+          options: [],
+          includingResourceValuesForKeys: nil,
+          relativeTo: nil
+        )
+        var audioBookmarks = UserDefaults.standard.dictionary(forKey: "audio_core.securityScopedBookmarks") as? [String: Data] ?? [:]
+        let standardKey = url.standardizedFileURL.resolvingSymlinksInPath().path
+        audioBookmarks[standardKey] = bookmarkData
+        UserDefaults.standard.set(audioBookmarks, forKey: "audio_core.securityScopedBookmarks")
+      } catch {}
       pendingResult?([
         "path": url.path
       ])
