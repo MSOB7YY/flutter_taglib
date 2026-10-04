@@ -507,5 +507,52 @@ void main() {
         }
       }
     });
+
+    test('Native batch read matches single file reads (readBatchNative)', () async {
+      final assets = Directory('test/assets').listSync().whereType<File>().map((f) => f.path).toList();
+      const missingPath = 'test/assets/does not exist.mp3';
+      final paths = [
+        for (var i = 0; i < 20; i++) ...assets,
+        missingPath,
+      ];
+
+      final results = await TagLibFile.readBatchNative(paths, threads: 6, readCover: true).toList();
+      expect(results.length, equals(paths.length));
+      expect(results.map((r) => r.index).toSet().length, equals(paths.length));
+
+      for (final res in results) {
+        expect(res.path, equals(paths[res.index]));
+        final file = TagLibFile.open(res.path);
+        if (file == null) {
+          expect(res.success, isFalse);
+          expect(res.properties, isEmpty);
+          continue;
+        }
+        expect(res.success, isTrue);
+        expect(res.properties, equals(file.properties));
+        final info = res.audioInfo!;
+        final expectedInfo = file.audioInfo;
+        expect(info.format, equals(expectedInfo.format));
+        expect(info.isLossless, equals(expectedInfo.isLossless));
+        expect(info.duration, equals(expectedInfo.duration));
+        expect(info.bitrate, equals(expectedInfo.bitrate));
+        expect(info.bitrateMode, equals(expectedInfo.bitrateMode));
+        expect(info.sampleRate, equals(expectedInfo.sampleRate));
+        expect(info.channels, equals(expectedInfo.channels));
+        expect(info.bitsPerSample, equals(expectedInfo.bitsPerSample));
+        expect(res.coverData, equals(file.coverData));
+        file.close();
+      }
+      expect(results.where((r) => r.path == missingPath).single.success, isFalse);
+    });
+
+    test('Native batch read without covers (readBatchNative)', () async {
+      final results = await TagLibFile.readBatchNative([
+        'test/assets/01 TempleOS Hymn Risen (Remix).mp3',
+      ]).toList();
+      expect(results.single.success, isTrue);
+      expect(results.single.coverData, isNull);
+      expect(results.single.properties[TagProperties.title], equals(['TempleOS Hymn Risen (Remix)']));
+    });
   });
 }

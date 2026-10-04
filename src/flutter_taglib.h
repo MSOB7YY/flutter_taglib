@@ -118,6 +118,51 @@ FFI_PLUGIN_EXPORT int taglib_bridge_properties_value_count(TagLibBridgePropertie
 FFI_PLUGIN_EXPORT const char* taglib_bridge_properties_value(TagLibBridgeProperties* props, const char* key, int value_index);
 FFI_PLUGIN_EXPORT void taglib_bridge_properties_add(TagLibBridgeProperties* props, const char* key, const char* value);
 
+// Frees memory handed over by the bridge, such as TagLibBatchItem.cover.
+FFI_PLUGIN_EXPORT void taglib_bridge_free(void* data);
+
+// Batch reading on native threads
+typedef struct TagLibBatch TagLibBatch;
+
+// One file read by a batch. All pointers except cover live inside the item's
+// own allocation and are released by taglib_batch_item_free.
+typedef struct TagLibBatchItem {
+    int32_t index; // index of the path in the paths passed to taglib_batch_start
+    int32_t success; // 0 when the file could not be opened, the remaining fields are then empty
+    int32_t duration_ms;
+    int32_t bitrate;
+    int32_t sample_rate;
+    int32_t channels;
+    int32_t bits_per_sample;
+    int32_t lossless; // 1 lossless, 0 lossy, -1 unknown
+    // Packed properties: properties_count entries of
+    // [u32 key length][key][u32 values count]([u32 value length][value])...
+    // in native byte order, strings are UTF-8 without terminators.
+    uint32_t properties_count;
+    uint32_t properties_size;
+    const uint8_t* properties;
+    const char* format; // NULL when undetermined
+    const char* bitrate_mode;
+    // Front cover bytes, NULL when absent or not requested. Owned by the
+    // receiver, release with taglib_bridge_free.
+    uint8_t* cover;
+    uint32_t cover_size;
+} TagLibBatchItem;
+
+typedef void (*TagLibBatchItemCallback)(TagLibBatchItem* item);
+
+// Reads count paths on up to threads native threads, in no particular order.
+// on_item is called once per path from a worker thread, the receiver releases
+// each item with taglib_batch_item_free. The paths are copied.
+// Returns NULL when no thread could be started.
+FFI_PLUGIN_EXPORT TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, TagLibBatchItemCallback on_item);
+
+// Waits for the worker threads to exit and frees the batch. Call once every
+// item was received.
+FFI_PLUGIN_EXPORT void taglib_batch_free(TagLibBatch* batch);
+
+FFI_PLUGIN_EXPORT void taglib_batch_item_free(TagLibBatchItem* item);
+
 #ifdef __cplusplus
 }
 #endif

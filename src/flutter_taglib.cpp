@@ -38,9 +38,27 @@
 #include <map>
 #include <unordered_map>
 #include <cstring>
+#include <cstdlib>
 #include <cctype>
 #include <typeinfo>
 #include <typeindex>
+#include <atomic>
+#include <thread>
+#include <memory>
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <pthread/qos.h>
+#else
+#include <sys/resource.h>
+#endif
 
 // Itanium ABI toolchains (Android, Apple, Linux) mangle typeid names and need
 // cxxabi.h to demangle them. MSVC-targeting compilers, including clang on
@@ -1378,6 +1396,234 @@ void taglib_bridge_properties_add(TagLibBridgeProperties* props, const char* key
     TagLib::String tVal(value, TagLib::String::UTF8);
     props->properties[tKey].append(tVal);
     props->refreshCache();
+}
+
+void taglib_bridge_free(void* data) {
+    std::free(data);
+}
+
+} // extern "C"
+
+// by claude
+// Batch reading: a pool of native threads opens and parses the files, and hands
+// each result to the caller as one packed allocation. Dart isolates are not
+// involved, so a slow disk never holds a Dart mutator thread.
+
+struct TagLibBatch {
+    std::vector<std::string> paths;
+    std::atomic<int32_t> nextIndex{0};
+    int readStyle;
+    bool readCover;
+    TagLibBatchItemCallback onItem;
+    std::vector<std::thread> threads;
+};
+
+static void batch_append_u32(std::string& buffer, uint32_t value) {
+    buffer.append(reinterpret_cast<const char*>(&value), sizeof(value));
+}
+
+static void batch_append_string(std::string& buffer, const TagLib::String& value) {
+    const std::string utf8 = value.to8Bit(true);
+    batch_append_u32(buffer, static_cast<uint32_t>(utf8.size()));
+    buffer.append(utf8);
+}
+
+// Reads everything that can throw before allocating, so a failure leaks nothing.
+static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, bool readCover) {
+    std::string region;
+    uint32_t propertiesCount = 0;
+    const TagLib::PropertyMap properties = file->fileRef->properties();
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        batch_append_string(region, it->first);
+        batch_append_u32(region, static_cast<uint32_t>(it->second.size()));
+        for (const auto& value : it->second) {
+            batch_append_string(region, value);
+        }
+        propertiesCount++;
+    }
+    const size_t propertiesSize = region.size();
+
+    const char* format = taglib_bridge_get_format(file);
+    const size_t formatOffset = region.size();
+    if (format) {
+        region.append(format);
+        region.push_back('\0');
+    }
+    const size_t bitrateModeOffset = region.size();
+    region.append(taglib_bridge_get_bitrate_mode(file));
+    region.push_back('\0');
+
+    const int32_t durationMs = taglib_bridge_get_duration(file);
+    const int32_t bitrate = taglib_bridge_get_bitrate(file);
+    const int32_t sampleRate = taglib_bridge_get_samplerate(file);
+    const int32_t channels = taglib_bridge_get_channels(file);
+    const int32_t bitsPerSample = taglib_bridge_get_bits_per_sample(file);
+    const int32_t lossless = taglib_bridge_is_lossless(file);
+
+    uint8_t* cover = nullptr;
+    uint32_t coverSize = readCover ? taglib_bridge_front_cover_size(file) : 0;
+    if (coverSize > 0) {
+        cover = static_cast<uint8_t*>(std::malloc(coverSize));
+        if (!cover || taglib_bridge_front_cover_data(file, cover, coverSize) != 1) {
+            std::free(cover);
+            cover = nullptr;
+            coverSize = 0;
+        }
+    }
+
+    auto* item = static_cast<TagLibBatchItem*>(std::malloc(sizeof(TagLibBatchItem) + region.size()));
+    if (!item) {
+        std::free(cover);
+        return nullptr;
+    }
+    auto* regionPtr = reinterpret_cast<uint8_t*>(item + 1);
+    std::memcpy(regionPtr, region.data(), region.size());
+
+    item->index = index;
+    item->success = 1;
+    item->duration_ms = durationMs;
+    item->bitrate = bitrate;
+    item->sample_rate = sampleRate;
+    item->channels = channels;
+    item->bits_per_sample = bitsPerSample;
+    item->lossless = lossless;
+    item->properties_count = propertiesCount;
+    item->properties_size = static_cast<uint32_t>(propertiesSize);
+    item->properties = regionPtr;
+    item->format = format ? reinterpret_cast<const char*>(regionPtr + formatOffset) : nullptr;
+    item->bitrate_mode = reinterpret_cast<const char*>(regionPtr + bitrateModeOffset);
+    item->cover = cover;
+    item->cover_size = coverSize;
+    return item;
+}
+
+// Read-only, unlike taglib_bridge_open: no write handle that blocks concurrent
+// opens of the same file on Windows or makes Android rescan it once closed.
+static TagLibBridgeFile* batch_open_read_only(const char* path, int readStyle) {
+#ifdef __ANDROID__
+    if (std::strncmp(path, "content://", 10) == 0) {
+        const int fd = open_content_uri_fd(path, "r");
+        return fd == -1 ? nullptr : taglib_bridge_open_fd_with_style(fd, readStyle);
+    }
+#endif
+
+    try {
+        bool readAudioProps = true;
+        TagLib::AudioProperties::ReadStyle style = TagLib::AudioProperties::Average;
+        resolve_read_style(readStyle, readAudioProps, style);
+
+#ifdef _WIN32
+        TagLib::String pathStr(path, TagLib::String::UTF8);
+        TagLib::FileName filename(pathStr.toWString().c_str());
+#else
+        TagLib::FileName filename = path;
+#endif
+        auto stream = std::make_unique<TagLib::FileStream>(filename, true);
+        if (!stream->isOpen()) return nullptr;
+        auto fileRef = std::make_unique<TagLib::FileRef>(stream.get(), readAudioProps, style);
+        if (fileRef->isNull()) return nullptr;
+
+        auto bridge = new TagLibBridgeFile();
+        bridge->fileRef = fileRef.release();
+        bridge->stream = stream.release();
+        return bridge;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+static TagLibBatchItem* batch_failed_item(int32_t index) {
+    auto* item = static_cast<TagLibBatchItem*>(std::calloc(1, sizeof(TagLibBatchItem)));
+    if (item) {
+        item->index = index;
+        item->lossless = kLosslessUnknown;
+    }
+    return item;
+}
+
+// Workers mostly wait on disk, keep them from competing with the UI threads.
+static void batch_lower_thread_priority() {
+#if defined(_WIN32)
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#elif defined(__APPLE__)
+    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#else
+    setpriority(PRIO_PROCESS, 0, 10);
+#endif
+}
+
+static void batch_worker(TagLibBatch* batch) {
+    batch_lower_thread_priority();
+    const int32_t count = static_cast<int32_t>(batch->paths.size());
+    while (true) {
+        const int32_t index = batch->nextIndex.fetch_add(1, std::memory_order_relaxed);
+        if (index >= count) break;
+
+        TagLibBatchItem* item = nullptr;
+        TagLibBridgeFile* file = batch_open_read_only(batch->paths[index].c_str(), batch->readStyle);
+        if (file) {
+            try {
+                item = batch_read_item(index, file, batch->readCover);
+            } catch (...) {
+            }
+            taglib_bridge_close(file);
+        }
+        if (!item) item = batch_failed_item(index);
+        if (item) batch->onItem(item);
+    }
+
+#ifdef __ANDROID__
+    // content:// paths attach this thread to the JVM, which aborts the process
+    // if a thread exits while attached.
+    JNIEnv* env = nullptr;
+    if (g_vm && g_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
+        g_vm->DetachCurrentThread();
+    }
+#endif
+}
+
+extern "C" {
+
+TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, TagLibBatchItemCallback on_item) {
+    if (!paths || count <= 0 || !on_item) return nullptr;
+
+    auto* batch = new TagLibBatch();
+    batch->paths.reserve(static_cast<size_t>(count));
+    for (int32_t i = 0; i < count; i++) {
+        batch->paths.emplace_back(paths[i] ? paths[i] : "");
+    }
+    batch->readStyle = read_style;
+    batch->readCover = read_cover != 0;
+    batch->onItem = on_item;
+
+    const int32_t threadsLimited = threads < count ? threads : count;
+    const int32_t threadCount = threadsLimited > 0 ? threadsLimited : 1;
+    batch->threads.reserve(static_cast<size_t>(threadCount));
+    try {
+        for (int32_t i = 0; i < threadCount; i++) {
+            batch->threads.emplace_back(batch_worker, batch);
+        }
+    } catch (...) {
+        LOGE("taglib_batch_start: started %d of %d threads", static_cast<int>(batch->threads.size()), static_cast<int>(threadCount));
+    }
+
+    if (batch->threads.empty()) {
+        delete batch;
+        return nullptr;
+    }
+    return batch;
+}
+
+void taglib_batch_free(TagLibBatch* batch) {
+    if (!batch) return;
+    for (auto& thread : batch->threads) {
+        thread.join();
+    }
+    delete batch;
+}
+
+void taglib_batch_item_free(TagLibBatchItem* item) {
+    std::free(item);
 }
 
 } // extern "C"

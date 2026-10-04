@@ -623,6 +623,164 @@ class TagLibFile {
     return completer.future;
   }
 
+  /// Reads [paths] on a pool of native threads, emitting each result as soon as
+  /// it is read, in completion order. Unlike [readBatchAsync], no isolates are
+  /// spawned, the calling isolate only decodes the results.
+  ///
+  /// [threads] defaults to the number of processors.
+  static Stream<TagLibBatchResult> readBatchNative(
+    List<String> paths, {
+    int threads = 0,
+    TagLibAudioPropertiesStyle audioPropertiesStyle = TagLibAudioPropertiesStyle.average,
+    bool readCover = false,
+  }) async* {
+    if (paths.isEmpty) return;
+    if (Platform.isAndroid) {
+      await _initAndroidNativeContext(); // -- needed for content:// paths
+    }
+    if (!isSupported) {
+      throw UnsupportedError(
+        'flutter_taglib is not supported or has been disabled on this platform.',
+      );
+    }
+    final effectiveThreads = threads > 0 ? threads : Platform.numberOfProcessors;
+    yield* _startBatchNative(paths, effectiveThreads, audioPropertiesStyle, readCover);
+  }
+
+  static Stream<TagLibBatchResult> _startBatchNative(
+    List<String> paths,
+    int threads,
+    TagLibAudioPropertiesStyle audioPropertiesStyle,
+    bool readCover,
+  ) {
+    final controller = StreamController<TagLibBatchResult>();
+    late final ffi.Pointer<bindings.TagLibBatch> batch;
+    late final ffi.NativeCallable<bindings.TagLibBatchItemCallbackFunction> onItem;
+    int remaining = paths.length;
+    onItem = ffi.NativeCallable<bindings.TagLibBatchItemCallbackFunction>.listener(
+      (ffi.Pointer<bindings.TagLibBatchItem> itemPtr) {
+        final result = _decodeBatchItem(itemPtr.ref, paths);
+        bindings.taglib_batch_item_free(itemPtr);
+        controller.add(result);
+        remaining--;
+        if (remaining == 0) {
+          onItem.close();
+          bindings.taglib_batch_free(batch);
+          controller.close();
+        }
+      },
+    );
+
+    final pathsPtr = calloc<ffi.Pointer<ffi.Char>>(paths.length);
+    try {
+      for (var i = 0; i < paths.length; i++) {
+        final pathPtr = paths[i].toNativeUtf8(allocator: calloc);
+        pathsPtr[i] = pathPtr.cast();
+      }
+      batch = bindings.taglib_batch_start(
+        pathsPtr,
+        paths.length,
+        threads,
+        audioPropertiesStyle.value,
+        readCover ? 1 : 0,
+        onItem.nativeFunction,
+      );
+    } finally {
+      for (var i = 0; i < paths.length; i++) {
+        calloc.free(pathsPtr[i]);
+      }
+      calloc.free(pathsPtr);
+    }
+
+    if (batch == ffi.nullptr) {
+      onItem.close();
+      throw StateError('flutter_taglib: could not start batch reading threads.');
+    }
+    return controller.stream;
+  }
+
+  static const _batchUtf8Decoder = Utf8Decoder(allowMalformed: true);
+
+  static TagLibBatchResult _decodeBatchItem(
+    bindings.TagLibBatchItem item,
+    List<String> paths,
+  ) {
+    final index = item.index;
+    final path = paths[index];
+    if (item.success == 0) {
+      return TagLibBatchResult._(
+        index: index,
+        path: path,
+        audioInfo: null,
+        properties: const {},
+        coverData: null,
+      );
+    }
+
+    final properties = <String, List<String>>{};
+    final propertiesCount = item.properties_count;
+    if (propertiesCount > 0) {
+      final bytes = item.properties.asTypedList(item.properties_size);
+      final data = ByteData.sublistView(bytes);
+      var offset = 0;
+      for (var i = 0; i < propertiesCount; i++) {
+        final keyLength = data.getUint32(offset, Endian.host);
+        offset += 4;
+        final keyEnd = offset + keyLength;
+        final key = _batchUtf8Decoder.convert(bytes, offset, keyEnd);
+        offset = keyEnd;
+        final valuesCount = data.getUint32(offset, Endian.host);
+        offset += 4;
+        final values = <String>[];
+        for (var j = 0; j < valuesCount; j++) {
+          final valueLength = data.getUint32(offset, Endian.host);
+          offset += 4;
+          final valueEnd = offset + valueLength;
+          final value = _batchUtf8Decoder.convert(bytes, offset, valueEnd);
+          values.add(value);
+          offset = valueEnd;
+        }
+        properties[key] = values;
+      }
+    }
+
+    String? format;
+    final formatPtr = item.format;
+    if (formatPtr != ffi.nullptr) format = formatPtr.cast<Utf8>().toDartString();
+    final bitrateMode = item.bitrate_mode.cast<Utf8>().toDartString();
+    final duration = Duration(milliseconds: item.duration_ms);
+    final lossless = item.lossless;
+    final bitsPerSample = item.bits_per_sample;
+    final audioInfo = AudioInfo(
+      format: format,
+      isLossless: lossless < 0 ? null : lossless == 1,
+      duration: duration,
+      bitrate: item.bitrate,
+      bitrateMode: bitrateMode,
+      sampleRate: item.sample_rate,
+      channels: item.channels,
+      bitsPerSample: bitsPerSample > 0 ? bitsPerSample : null,
+    );
+
+    Uint8List? coverData;
+    final coverPtr = item.cover;
+    if (coverPtr != ffi.nullptr) {
+      coverData = coverPtr.asTypedList(
+        item.cover_size,
+        finalizer: bindings.taglib_bridge_free_address,
+        token: coverPtr.cast(),
+      );
+    }
+
+    return TagLibBatchResult._(
+      index: index,
+      path: path,
+      audioInfo: audioInfo,
+      properties: properties,
+      coverData: coverData,
+    );
+  }
+
   static Future<Map<String, String>> _resolveAndroidSafTreeMappings(
     List<String> filePaths,
   ) async {
@@ -1430,6 +1588,32 @@ class AuthorizedDirectory {
       'path': path,
     });
   }
+}
+
+/// One file read by [TagLibFile.readBatchNative].
+class TagLibBatchResult {
+  const TagLibBatchResult._({
+    required this.index,
+    required this.path,
+    required this.audioInfo,
+    required this.properties,
+    required this.coverData,
+  });
+
+  /// Index of [path] in the paths passed to [TagLibFile.readBatchNative].
+  final int index;
+  final String path;
+
+  /// `null` when the file could not be opened.
+  final AudioInfo? audioInfo;
+
+  /// Same as [TagLibFile.properties].
+  final Map<String, List<String>> properties;
+
+  /// Front cover bytes, only when requested and present.
+  final Uint8List? coverData;
+
+  bool get success => audioInfo != null;
 }
 
 /// Represents detailed audio properties of a file.

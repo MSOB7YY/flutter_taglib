@@ -8,6 +8,7 @@
 library;
 
 import 'dart:ffi' as ffi;
+import 'flutter_taglib_bindings_generated.dart' as self;
 
 /// Open a file by file path. Returns NULL if failed.
 @ffi.Native<ffi.Pointer<TagLibBridgeFile> Function(ffi.Pointer<ffi.Char>)>()
@@ -400,8 +401,114 @@ external void taglib_bridge_properties_add(
   ffi.Pointer<ffi.Char> value,
 );
 
+/// Frees memory handed over by the bridge, such as TagLibBatchItem.cover.
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>()
+external void taglib_bridge_free(ffi.Pointer<ffi.Void> data);
+
+/// Reads count paths on up to threads native threads, in no particular order.
+/// on_item is called once per path from a worker thread, the receiver releases
+/// each item with taglib_batch_item_free. The paths are copied.
+/// Returns NULL when no thread could be started.
+@ffi.Native<
+  ffi.Pointer<TagLibBatch> Function(
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Int32,
+    TagLibBatchItemCallback,
+  )
+>()
+external ffi.Pointer<TagLibBatch> taglib_batch_start(
+  ffi.Pointer<ffi.Pointer<ffi.Char>> paths,
+  int count,
+  int threads,
+  int read_style,
+  int read_cover,
+  TagLibBatchItemCallback on_item,
+);
+
+/// Waits for the worker threads to exit and frees the batch. Call once every
+/// item was received.
+@ffi.Native<ffi.Void Function(ffi.Pointer<TagLibBatch>)>()
+external void taglib_batch_free(ffi.Pointer<TagLibBatch> batch);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<TagLibBatchItem>)>()
+external void taglib_batch_item_free(ffi.Pointer<TagLibBatchItem> item);
+
+const addresses = _SymbolAddresses();
+
+class _SymbolAddresses {
+  const _SymbolAddresses();
+  ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>
+  get taglib_bridge_free => ffi.Native.addressOf(self.taglib_bridge_free);
+}
+
 final class TagLibBridgeFile extends ffi.Opaque {}
 
 final class TagLibBridgePictures extends ffi.Opaque {}
 
 final class TagLibBridgeProperties extends ffi.Opaque {}
+
+final class TagLibBatch extends ffi.Opaque {}
+
+/// One file read by a batch. All pointers except cover live inside the item's
+/// own allocation and are released by taglib_batch_item_free.
+final class TagLibBatchItem extends ffi.Struct {
+  /// index of the path in the paths passed to taglib_batch_start
+  @ffi.Int32()
+  external int index;
+
+  /// 0 when the file could not be opened, the remaining fields are then empty
+  @ffi.Int32()
+  external int success;
+
+  @ffi.Int32()
+  external int duration_ms;
+
+  @ffi.Int32()
+  external int bitrate;
+
+  @ffi.Int32()
+  external int sample_rate;
+
+  @ffi.Int32()
+  external int channels;
+
+  @ffi.Int32()
+  external int bits_per_sample;
+
+  /// 1 lossless, 0 lossy, -1 unknown
+  @ffi.Int32()
+  external int lossless;
+
+  /// Packed properties: properties_count entries of
+  /// [u32 key length][key][u32 values count]([u32 value length][value])...
+  /// in native byte order, strings are UTF-8 without terminators.
+  @ffi.Uint32()
+  external int properties_count;
+
+  @ffi.Uint32()
+  external int properties_size;
+
+  external ffi.Pointer<ffi.Uint8> properties;
+
+  /// NULL when undetermined
+  external ffi.Pointer<ffi.Char> format;
+
+  external ffi.Pointer<ffi.Char> bitrate_mode;
+
+  /// Front cover bytes, NULL when absent or not requested. Owned by the
+  /// receiver, release with taglib_bridge_free.
+  external ffi.Pointer<ffi.Uint8> cover;
+
+  @ffi.Uint32()
+  external int cover_size;
+}
+
+typedef TagLibBatchItemCallbackFunction =
+    ffi.Void Function(ffi.Pointer<TagLibBatchItem> item);
+typedef DartTagLibBatchItemCallbackFunction =
+    void Function(ffi.Pointer<TagLibBatchItem> item);
+typedef TagLibBatchItemCallback =
+    ffi.Pointer<ffi.NativeFunction<TagLibBatchItemCallbackFunction>>;

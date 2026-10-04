@@ -15,3 +15,7 @@ ffi-native:
 comments:
   style: any
   length: full
+functions:
+  symbol-address:
+    include:
+      - taglib_bridge_free

@@ -1,3 +1,6 @@
+## 1.6.0
+* feat: `TagLibFile.readBatchNative`, reads on a pool of native threads and streams results without spawning isolates
+
 ## 1.5.7
 * fix(android): `UnsupportedError` on `armeabi-v7a` devices
 * fix(android): apps with `minSdk` below 24 now build from source, since the published binaries import libc symbols older devices do not export

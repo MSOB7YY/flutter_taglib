@@ -8,6 +8,9 @@ import '../flutter_taglib_bindings_generated.dart' as generated;
 typedef TagLibBridgeFile = generated.TagLibBridgeFile;
 typedef TagLibBridgePictures = generated.TagLibBridgePictures;
 typedef TagLibBridgeProperties = generated.TagLibBridgeProperties;
+typedef TagLibBatch = generated.TagLibBatch;
+typedef TagLibBatchItem = generated.TagLibBatchItem;
+typedef TagLibBatchItemCallbackFunction = generated.TagLibBatchItemCallbackFunction;
 
 bool get usesDownloadedDesktopBinary => false;
 String? get loadedDesktopBinaryPath => null;
@@ -327,4 +330,25 @@ void taglib_bridge_properties_add(
   ffi.Pointer<ffi.Char> value,
 ) {
   generated.taglib_bridge_properties_add(properties, key, value);
+}
+
+ffi.Pointer<ffi.NativeFinalizerFunction> get taglib_bridge_free_address => generated.addresses.taglib_bridge_free;
+
+ffi.Pointer<TagLibBatch> taglib_batch_start(
+  ffi.Pointer<ffi.Pointer<ffi.Char>> paths,
+  int count,
+  int threads,
+  int readStyle,
+  int readCover,
+  generated.TagLibBatchItemCallback onItem,
+) {
+  return generated.taglib_batch_start(paths, count, threads, readStyle, readCover, onItem);
+}
+
+void taglib_batch_free(ffi.Pointer<TagLibBatch> batch) {
+  generated.taglib_batch_free(batch);
+}
+
+void taglib_batch_item_free(ffi.Pointer<TagLibBatchItem> item) {
+  generated.taglib_batch_item_free(item);
 }
