@@ -46,6 +46,7 @@
 #include <atomic>
 #include <thread>
 #include <memory>
+#include <mutex>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -55,23 +56,16 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
 #elif defined(__APPLE__)
+#import <Foundation/Foundation.h>
 #include <pthread/qos.h>
 #else
 #include <sys/resource.h>
-#endif
-
-#if defined(__APPLE__)
-#import <Foundation/Foundation.h>
-#elif defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <winhttp.h>
-#pragma comment(lib, "winhttp.lib")
-#elif !defined(__ANDROID__)
+#ifndef __ANDROID__
 #include <curl/curl.h>
+#endif
 #endif
 
 // Itanium ABI toolchains (Android, Apple, Linux) mangle typeid names and need
@@ -748,6 +742,27 @@ static std::map<std::string, std::string> parse_headers_json(const char* json_st
     return headers;
 }
 
+// Keeps one stream's connection alive between its range requests, so each
+// block doesn't pay a new TCP (and TLS) handshake. Android's HttpURLConnection
+// and Apple's shared NSURLSession already pool connections on their own.
+struct HttpRangeConnection {
+#if defined(_WIN32)
+    HINTERNET session = nullptr;
+    HINTERNET connect = nullptr;
+
+    ~HttpRangeConnection() {
+        if (connect) WinHttpCloseHandle(connect);
+        if (session) WinHttpCloseHandle(session);
+    }
+#elif !defined(__APPLE__) && !defined(__ANDROID__)
+    CURL* curl = nullptr;
+
+    ~HttpRangeConnection() {
+        if (curl) curl_easy_cleanup(curl);
+    }
+#endif
+};
+
 #if defined(__APPLE__)
 static bool apple_fetch_http_range(
     const std::string& url,
@@ -1050,6 +1065,7 @@ static bool android_fetch_http_range(
 
 #if defined(_WIN32)
 static bool windows_fetch_http_range(
+    HttpRangeConnection& connection,
     const std::string& url,
     const std::map<std::string, std::string>& headers,
     int64_t offset,
@@ -1085,31 +1101,32 @@ static bool windows_fetch_http_range(
 
     bool isHttps = (urlComp.nScheme == INTERNET_SCHEME_HTTPS);
 
-    HINTERNET hSession = WinHttpOpen(L"flutter_taglib/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) {
-        out_error = "WinHttpOpen failed";
-        return false;
+    if (!connection.session) {
+        connection.session = WinHttpOpen(L"flutter_taglib/1.0",
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            WINHTTP_NO_PROXY_NAME,
+            WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!connection.session) {
+            out_error = "WinHttpOpen failed";
+            return false;
+        }
+
+        int timeout = timeout_ms > 0 ? timeout_ms : 15000;
+        WinHttpSetTimeouts(connection.session, timeout, timeout, timeout, timeout);
     }
 
-    int timeout = timeout_ms > 0 ? timeout_ms : 15000;
-    WinHttpSetTimeouts(hSession, timeout, timeout, timeout, timeout);
-
-    HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), urlComp.nPort, 0);
-    if (!hConnect) {
-        WinHttpCloseHandle(hSession);
-        out_error = "WinHttpConnect failed";
-        return false;
+    if (!connection.connect) {
+        connection.connect = WinHttpConnect(connection.session, host.c_str(), urlComp.nPort, 0);
+        if (!connection.connect) {
+            out_error = "WinHttpConnect failed";
+            return false;
+        }
     }
 
     DWORD flags = isHttps ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(),
+    HINTERNET hRequest = WinHttpOpenRequest(connection.connect, L"GET", path.c_str(),
         NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!hRequest) {
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
         out_error = "WinHttpOpenRequest failed";
         return false;
     }
@@ -1133,8 +1150,6 @@ static bool windows_fetch_http_range(
     if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         !WinHttpReceiveResponse(hRequest, NULL)) {
         WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
         out_error = "WinHttpSendRequest or ReceiveResponse failed";
         return false;
     }
@@ -1146,16 +1161,12 @@ static bool windows_fetch_http_range(
 
     if (statusCode != 200 && statusCode != 206) {
         WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
         out_error = "HTTP status " + std::to_string(statusCode);
         return false;
     }
 
     if (offset > 0 && statusCode == 200) {
         WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
         out_error = "Server does not support HTTP Range requests (returned 200 OK for offset > 0)";
         return false;
     }
@@ -1200,8 +1211,6 @@ static bool windows_fetch_http_range(
     }
 
     WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
     return true;
 }
 #endif
@@ -1247,6 +1256,7 @@ static size_t taglib_curl_header_callback(char* buffer, size_t size, size_t nite
 }
 
 static bool curl_fetch_http_range(
+    HttpRangeConnection& connection,
     const std::string& url,
     const std::map<std::string, std::string>& headers,
     int64_t offset,
@@ -1256,11 +1266,18 @@ static bool curl_fetch_http_range(
     std::vector<uint8_t>& out_data,
     std::string& out_error
 ) {
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        out_error = "curl_easy_init failed";
-        return false;
+    if (!connection.curl) {
+        // curl_easy_init would otherwise run the global init lazily, which is not thread safe.
+        static std::once_flag curlGlobalInitOnce;
+        std::call_once(curlGlobalInitOnce, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+        connection.curl = curl_easy_init();
+        if (!connection.curl) {
+            out_error = "curl_easy_init failed";
+            return false;
+        }
     }
+    CURL* curl = connection.curl;
+    curl_easy_reset(curl); // keeps the open connection
 
     struct curl_slist* chunk = nullptr;
     for (const auto& kv : headers) {
@@ -1297,7 +1314,6 @@ static bool curl_fetch_http_range(
     if (chunk) {
         curl_slist_free_all(chunk);
     }
-    curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
         out_error = curl_easy_strerror(res);
@@ -1322,6 +1338,7 @@ static bool curl_fetch_http_range(
 #endif
 
 static bool fetch_http_range(
+    [[maybe_unused]] HttpRangeConnection& connection,
     const std::string& url,
     const std::map<std::string, std::string>& headers,
     int64_t offset,
@@ -1336,9 +1353,9 @@ static bool fetch_http_range(
 #elif defined(__ANDROID__)
     return android_fetch_http_range(url, headers, offset, length, timeout_ms, out_total_length, out_data, out_error);
 #elif defined(_WIN32)
-    return windows_fetch_http_range(url, headers, offset, length, timeout_ms, out_total_length, out_data, out_error);
+    return windows_fetch_http_range(connection, url, headers, offset, length, timeout_ms, out_total_length, out_data, out_error);
 #else
-    return curl_fetch_http_range(url, headers, offset, length, timeout_ms, out_total_length, out_data, out_error);
+    return curl_fetch_http_range(connection, url, headers, offset, length, timeout_ms, out_total_length, out_data, out_error);
 #endif
 }
 
@@ -1353,7 +1370,7 @@ public:
         std::vector<uint8_t> block0;
         std::string err;
         int64_t totalLen = -1;
-        bool ok = fetch_http_range(m_url, m_headers, 0, kBlockSize, m_timeout_ms, totalLen, block0, err);
+        bool ok = fetch_http_range(m_connection, m_url, m_headers, 0, kBlockSize, m_timeout_ms, totalLen, block0, err);
         if (ok && !block0.empty()) {
             m_isOpen = true;
             if (totalLen > 0) {
@@ -1387,25 +1404,41 @@ public:
         result.resize(static_cast<unsigned int>(toRead));
         uint8_t* dest = reinterpret_cast<uint8_t*>(result.data());
 
+        const int64_t lastBlockIndex = (m_pos + static_cast<int64_t>(toRead) - 1) / kBlockSize;
         size_t bytesRead = 0;
         while (bytesRead < toRead) {
             int64_t currentOffset = m_pos + bytesRead;
             int64_t blockIndex = currentOffset / kBlockSize;
             size_t blockOffset = static_cast<size_t>(currentOffset % kBlockSize);
-            size_t bytesFromBlock = std::min(toRead - bytesRead, kBlockSize - blockOffset);
+            size_t bytesWanted = toRead - bytesRead;
 
-            const std::vector<uint8_t>* blockData = get_or_fetch_block(blockIndex);
-            if (!blockData || blockOffset >= blockData->size()) {
-                break;
+            const std::vector<uint8_t>* source;
+            std::vector<uint8_t> runData;
+            int64_t sourceEndIndex = blockIndex;
+            auto it = m_cache.find(blockIndex);
+            if (it != m_cache.end()) {
+                touch_lru(blockIndex);
+                source = &it->second;
+            } else {
+                // one request for every missing block up to the end of this read, a big tag or cover
+                // would otherwise cost a round trip per block.
+                while (sourceEndIndex < lastBlockIndex && m_cache.find(sourceEndIndex + 1) == m_cache.end()) {
+                    sourceEndIndex++;
+                }
+                if (!fetch_run(blockIndex, sourceEndIndex, runData)) break;
+                source = &runData;
             }
 
-            size_t actualBytesFromBlock = std::min(bytesFromBlock, blockData->size() - blockOffset);
-            std::memcpy(dest + bytesRead, blockData->data() + blockOffset, actualBytesFromBlock);
-            bytesRead += actualBytesFromBlock;
+            if (blockOffset >= source->size()) break;
+            size_t available = source->size() - blockOffset;
+            size_t bytesCopied = std::min(bytesWanted, available);
+            std::memcpy(dest + bytesRead, source->data() + blockOffset, bytesCopied);
+            bytesRead += bytesCopied;
 
-            if (actualBytesFromBlock < bytesFromBlock) {
-                break;
-            }
+            int64_t sourceStart = blockIndex * kBlockSize;
+            int64_t sourceEnd = std::min((sourceEndIndex + 1) * static_cast<int64_t>(kBlockSize), m_length);
+            bool isSourceShort = static_cast<int64_t>(source->size()) < sourceEnd - sourceStart;
+            if (isSourceShort && bytesCopied == available) break;
         }
 
         m_pos += bytesRead;
@@ -1463,6 +1496,7 @@ private:
     int64_t m_pos;
     int64_t m_length;
     bool m_isOpen;
+    HttpRangeConnection m_connection;
 
     std::unordered_map<int64_t, std::vector<uint8_t>> m_cache;
     std::vector<int64_t> m_lruOrder;
@@ -1492,50 +1526,33 @@ private:
         m_lruOrder.push_back(blockIndex);
     }
 
-    const std::vector<uint8_t>* get_or_fetch_block(int64_t blockIndex) {
-        auto it = m_cache.find(blockIndex);
-        if (it != m_cache.end()) {
-            touch_lru(blockIndex);
-            return &it->second;
-        }
+    // Fetches blocks [firstIndex, lastIndex] in one request, caching only the last one since reads
+    // usually continue right after a run.
+    bool fetch_run(int64_t firstIndex, int64_t lastIndex, std::vector<uint8_t>& out) {
+        int64_t startOffset = firstIndex * kBlockSize;
+        if (startOffset >= m_length) return false;
 
-        int64_t startOffset = blockIndex * kBlockSize;
-        if (startOffset >= m_length) {
-            return nullptr;
-        }
-
-        int64_t reqLen = kBlockSize;
-        if (startOffset + reqLen > m_length) {
-            reqLen = m_length - startOffset;
-        }
-
-        std::vector<uint8_t> blockData;
+        int64_t endOffset = std::min((lastIndex + 1) * static_cast<int64_t>(kBlockSize), m_length);
         int64_t totalLen = -1;
         std::string err;
-        bool ok = fetch_http_range(m_url, m_headers, startOffset, reqLen, m_timeout_ms, totalLen, blockData, err);
-        if (!ok || blockData.empty()) {
-            LOGE("HttpRangeIOStream fetch block %lld failed: %s", (long long)blockIndex, err.c_str());
-            return nullptr;
+        bool ok = fetch_http_range(m_connection, m_url, m_headers, startOffset, endOffset - startOffset, m_timeout_ms, totalLen, out, err);
+        if (!ok || out.empty()) {
+            LOGE("HttpRangeIOStream fetch blocks %lld-%lld failed: %s", (long long)firstIndex, (long long)lastIndex, err.c_str());
+            return false;
         }
 
-        put_block(blockIndex, std::move(blockData));
-        return &m_cache[blockIndex];
+        size_t lastBlockStart = static_cast<size_t>((lastIndex - firstIndex) * kBlockSize);
+        if (out.size() > lastBlockStart) {
+            put_block(lastIndex, std::vector<uint8_t>(out.begin() + lastBlockStart, out.end()));
+        }
+        return true;
     }
 };
 
-extern "C" {
-
-TagLibBridgeFile* taglib_bridge_open_http(const char* url, const char* headers_json, int read_style, int timeout_ms) {
-    if (!url || std::strlen(url) == 0) {
-        LOGE("taglib_bridge_open_http: url is null or empty");
-        return nullptr;
-    }
-
+static TagLibBridgeFile* http_open_file(const char* url, std::map<std::string, std::string> headers, int read_style, int timeout_ms) {
     try {
-        std::map<std::string, std::string> headers = parse_headers_json(headers_json);
-        auto stream = new HttpRangeIOStream(url, headers, timeout_ms > 0 ? timeout_ms : 15000);
+        auto stream = std::make_unique<HttpRangeIOStream>(url, std::move(headers), timeout_ms > 0 ? timeout_ms : 15000);
         if (!stream->isOpen()) {
-            delete stream;
             LOGE("taglib_bridge_open_http: stream failed to open for url: %s", url);
             return nullptr;
         }
@@ -1544,17 +1561,15 @@ TagLibBridgeFile* taglib_bridge_open_http(const char* url, const char* headers_j
         TagLib::AudioProperties::ReadStyle style = TagLib::AudioProperties::Average;
         resolve_read_style(read_style, readAudioProps, style);
 
-        auto fileRef = new TagLib::FileRef(stream, readAudioProps, style);
+        auto fileRef = std::make_unique<TagLib::FileRef>(stream.get(), readAudioProps, style);
         if (fileRef->isNull()) {
-            delete fileRef;
-            delete stream;
             LOGE("taglib_bridge_open_http: fileRef is null (invalid format or unreadable stream) for: %s", url);
             return nullptr;
         }
 
         auto bridge = new TagLibBridgeFile();
-        bridge->stream = stream;
-        bridge->fileRef = fileRef;
+        bridge->fileRef = fileRef.release();
+        bridge->stream = stream.release();
         return bridge;
     } catch (const std::exception& e) {
         LOGE("taglib_bridge_open_http: std::exception caught for %s: %s", url, e.what());
@@ -1563,6 +1578,16 @@ TagLibBridgeFile* taglib_bridge_open_http(const char* url, const char* headers_j
         LOGE("taglib_bridge_open_http: unknown exception caught for %s", url);
         return nullptr;
     }
+}
+
+extern "C" {
+
+TagLibBridgeFile* taglib_bridge_open_http(const char* url, const char* headers_json, int read_style, int timeout_ms) {
+    if (!url || std::strlen(url) == 0) {
+        LOGE("taglib_bridge_open_http: url is null or empty");
+        return nullptr;
+    }
+    return http_open_file(url, parse_headers_json(headers_json), read_style, timeout_ms);
 }
 
 int taglib_bridge_save(TagLibBridgeFile* file) {
@@ -2312,6 +2337,8 @@ struct TagLibBatch {
     std::atomic<int32_t> nextIndex{0};
     int readStyle;
     bool readCover;
+    std::map<std::string, std::string> httpHeaders;
+    int httpTimeoutMs;
     TagLibBatchItemCallback onItem;
     std::vector<std::thread> threads;
 };
@@ -2397,7 +2424,12 @@ static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, b
 
 // Read-only, unlike taglib_bridge_open: no write handle that blocks concurrent
 // opens of the same file on Windows or makes Android rescan it once closed.
-static TagLibBridgeFile* batch_open_read_only(const char* path, int readStyle) {
+static TagLibBridgeFile* batch_open_read_only(const TagLibBatch* batch, const char* path) {
+    const int readStyle = batch->readStyle;
+    if (std::strncmp(path, "http://", 7) == 0 || std::strncmp(path, "https://", 8) == 0) {
+        return http_open_file(path, batch->httpHeaders, readStyle, batch->httpTimeoutMs);
+    }
+
 #ifdef __ANDROID__
     if (std::strncmp(path, "content://", 10) == 0) {
         const int fd = open_content_uri_fd(path, "r");
@@ -2458,7 +2490,7 @@ static void batch_worker(TagLibBatch* batch) {
         if (index >= count) break;
 
         TagLibBatchItem* item = nullptr;
-        TagLibBridgeFile* file = batch_open_read_only(batch->paths[index].c_str(), batch->readStyle);
+        TagLibBridgeFile* file = batch_open_read_only(batch, batch->paths[index].c_str());
         if (file) {
             try {
                 item = batch_read_item(index, file, batch->readCover);
@@ -2482,7 +2514,7 @@ static void batch_worker(TagLibBatch* batch) {
 
 extern "C" {
 
-TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, TagLibBatchItemCallback on_item) {
+TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, const char* http_headers_json, int32_t http_timeout_ms, TagLibBatchItemCallback on_item) {
     if (!paths || count <= 0 || !on_item) return nullptr;
 
     auto* batch = new TagLibBatch();
@@ -2492,6 +2524,8 @@ TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t
     }
     batch->readStyle = read_style;
     batch->readCover = read_cover != 0;
+    batch->httpHeaders = parse_headers_json(http_headers_json);
+    batch->httpTimeoutMs = http_timeout_ms;
     batch->onItem = on_item;
 
     const int32_t threadsLimited = threads < count ? threads : count;

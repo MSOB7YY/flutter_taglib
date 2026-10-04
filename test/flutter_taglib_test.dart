@@ -655,6 +655,53 @@ void main() {
       }
     });
 
+    test('Native batch read via HTTP matches local reads, one connection per file (readBatchNative)', () async {
+      final assets = Directory('test/assets').listSync().whereType<File>().where((f) => !f.path.endsWith('.jpg')).toList();
+      var requestCount = 0;
+      final connections = <int>{};
+      final assetsServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      assetsServer.listen((request) async {
+        requestCount++;
+        connections.add(request.connectionInfo!.remotePort);
+        expect(request.headers.value('Authorization'), equals('Bearer test-token'));
+        final file = File('test/assets/${Uri.decodeComponent(request.uri.pathSegments.last)}');
+        final fileLength = await file.length();
+        final range = request.headers.value('Range')!.substring(6).split('-');
+        final start = int.parse(range[0]);
+        final end = int.parse(range[1]).clamp(start, fileLength - 1);
+        final raf = await file.open();
+        await raf.setPosition(start);
+        final bytes = await raf.read(end - start + 1);
+        await raf.close();
+        request.response.statusCode = HttpStatus.partialContent;
+        request.response.headers.set(HttpHeaders.contentRangeHeader, 'bytes $start-$end/$fileLength');
+        request.response.headers.contentLength = bytes.length;
+        request.response.add(bytes);
+        await request.response.close();
+      });
+
+      final urls = [
+        for (final f in assets) 'http://127.0.0.1:${assetsServer.port}/${Uri.encodeComponent(f.uri.pathSegments.last)}',
+      ];
+      final remote = await TagLibFile.readBatchNative(urls, readCover: true, headers: {'Authorization': 'Bearer test-token'}).toList();
+      final local = await TagLibFile.readBatchNative(assets.map((f) => f.path).toList(), readCover: true).toList();
+      await assetsServer.close(force: true);
+
+      final localByIndex = {for (final r in local) r.index: r};
+      for (final r in remote) {
+        final l = localByIndex[r.index]!;
+        expect(r.success, equals(l.success), reason: r.path);
+        expect(r.properties, equals(l.properties), reason: r.path);
+        expect(r.audioInfo?.duration, equals(l.audioInfo?.duration), reason: r.path);
+        expect(r.audioInfo?.format, equals(l.audioInfo?.format), reason: r.path);
+        expect(r.coverData, equals(l.coverData), reason: r.path);
+      }
+      print('HTTP batch: ${urls.length} files, $requestCount requests, ${connections.length} connections');
+      if (!Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS) {
+        expect(connections.length, lessThanOrEqualTo(urls.length));
+      }
+    });
+
     test('readMetadataAsync reads local file metadata and cover', () async {
       final meta = await TagLibFile.readMetadataAsync(
         'test/assets/01 TempleOS Hymn Risen (Remix).mp3',

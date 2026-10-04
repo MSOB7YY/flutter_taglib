@@ -349,9 +349,11 @@ ffi.Pointer<TagLibBatch> taglib_batch_start(
   int threads,
   int readStyle,
   int readCover,
+  ffi.Pointer<ffi.Char> httpHeadersJson,
+  int httpTimeoutMs,
   generated.TagLibBatchItemCallback onItem,
 ) {
-  return generated.taglib_batch_start(paths, count, threads, readStyle, readCover, onItem);
+  return generated.taglib_batch_start(paths, count, threads, readStyle, readCover, httpHeadersJson, httpTimeoutMs, onItem);
 }
 
 void taglib_batch_free(ffi.Pointer<TagLibBatch> batch) {

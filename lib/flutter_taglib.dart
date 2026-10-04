@@ -778,11 +778,14 @@ class TagLibFile {
   /// spawned, the calling isolate only decodes the results.
   ///
   /// [threads] defaults to the number of processors.
+  /// `http(s)://` paths are read with range requests, sending [headers].
   static Stream<TagLibBatchResult> readBatchNative(
     List<String> paths, {
     int threads = 0,
     TagLibAudioPropertiesStyle audioPropertiesStyle = TagLibAudioPropertiesStyle.average,
     bool readCover = false,
+    Map<String, String>? headers,
+    Duration httpTimeout = const Duration(seconds: 15),
   }) async* {
     if (paths.isEmpty) return;
     if (Platform.isAndroid) {
@@ -794,7 +797,9 @@ class TagLibFile {
       );
     }
     final effectiveThreads = threads > 0 ? threads : Platform.numberOfProcessors;
-    yield* _startBatchNative(paths, effectiveThreads, audioPropertiesStyle, readCover);
+    String? headersJson;
+    if (headers != null && headers.isNotEmpty) headersJson = jsonEncode(headers);
+    yield* _startBatchNative(paths, effectiveThreads, audioPropertiesStyle, readCover, headersJson, httpTimeout);
   }
 
   static Stream<TagLibBatchResult> _startBatchNative(
@@ -802,6 +807,8 @@ class TagLibFile {
     int threads,
     TagLibAudioPropertiesStyle audioPropertiesStyle,
     bool readCover,
+    String? headersJson,
+    Duration httpTimeout,
   ) {
     final controller = StreamController<TagLibBatchResult>();
     late final ffi.Pointer<bindings.TagLibBatch> batch;
@@ -822,6 +829,8 @@ class TagLibFile {
     );
 
     final pathsPtr = calloc<ffi.Pointer<ffi.Char>>(paths.length);
+    ffi.Pointer<Utf8> headersJsonPtr = ffi.nullptr;
+    if (headersJson != null) headersJsonPtr = headersJson.toNativeUtf8(allocator: calloc);
     try {
       for (var i = 0; i < paths.length; i++) {
         final pathPtr = paths[i].toNativeUtf8(allocator: calloc);
@@ -833,9 +842,12 @@ class TagLibFile {
         threads,
         audioPropertiesStyle.value,
         readCover ? 1 : 0,
+        headersJsonPtr.cast(),
+        httpTimeout.inMilliseconds,
         onItem.nativeFunction,
       );
     } finally {
+      calloc.free(headersJsonPtr);
       for (var i = 0; i < paths.length; i++) {
         calloc.free(pathsPtr[i]);
       }

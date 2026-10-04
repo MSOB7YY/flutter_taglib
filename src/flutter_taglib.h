@@ -158,10 +158,12 @@ typedef struct TagLibBatchItem {
 typedef void (*TagLibBatchItemCallback)(TagLibBatchItem* item);
 
 // Reads count paths on up to threads native threads, in no particular order.
+// http(s):// paths are read with range requests using http_headers_json (same
+// format as taglib_bridge_open_http, may be NULL) and http_timeout_ms (0 for default).
 // on_item is called once per path from a worker thread, the receiver releases
 // each item with taglib_batch_item_free. The paths are copied.
 // Returns NULL when no thread could be started.
-FFI_PLUGIN_EXPORT TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, TagLibBatchItemCallback on_item);
+FFI_PLUGIN_EXPORT TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, const char* http_headers_json, int32_t http_timeout_ms, TagLibBatchItemCallback on_item);
 
 // Waits for the worker threads to exit and frees the batch. Call once every
 // item was received.

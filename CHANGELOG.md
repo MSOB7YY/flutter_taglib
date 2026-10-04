@@ -1,3 +1,7 @@
+## 1.7.0
+* feat: read tags from http(s) urls with range requests (from upstream), also in `readBatchNative` with `headers`
+* perf: http reads keep one connection per file and fetch consecutive missing blocks in one request
+
 ## 1.6.0
 * feat: `TagLibFile.readBatchNative`, reads on a pool of native threads and streams results without spawning isolates
 

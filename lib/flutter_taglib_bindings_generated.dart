@@ -37,6 +37,9 @@ external ffi.Pointer<TagLibBridgeFile> taglib_bridge_open_fd_with_style(
 );
 
 /// Open a remote file via HTTP/HTTPS URL with range-based stream.
+/// headers_json: optional JSON string containing key-value headers, e.g. "{\"Authorization\":\"Bearer xxx\"}" or NULL.
+/// read_style: 0=Fast, 1=Average, 2=Accurate, 3=None.
+/// timeout_ms: connection and read timeout in milliseconds (e.g. 15000). 0 for default.
 @ffi.Native<
   ffi.Pointer<TagLibBridgeFile> Function(
     ffi.Pointer<ffi.Char>,
@@ -422,6 +425,8 @@ external void taglib_bridge_properties_add(
 external void taglib_bridge_free(ffi.Pointer<ffi.Void> data);
 
 /// Reads count paths on up to threads native threads, in no particular order.
+/// http(s):// paths are read with range requests using http_headers_json (same
+/// format as taglib_bridge_open_http, may be NULL) and http_timeout_ms (0 for default).
 /// on_item is called once per path from a worker thread, the receiver releases
 /// each item with taglib_batch_item_free. The paths are copied.
 /// Returns NULL when no thread could be started.
@@ -432,6 +437,8 @@ external void taglib_bridge_free(ffi.Pointer<ffi.Void> data);
     ffi.Int32,
     ffi.Int32,
     ffi.Int32,
+    ffi.Pointer<ffi.Char>,
+    ffi.Int32,
     TagLibBatchItemCallback,
   )
 >()
@@ -441,6 +448,8 @@ external ffi.Pointer<TagLibBatch> taglib_batch_start(
   int threads,
   int read_style,
   int read_cover,
+  ffi.Pointer<ffi.Char> http_headers_json,
+  int http_timeout_ms,
   TagLibBatchItemCallback on_item,
 );
 
