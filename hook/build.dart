@@ -7,7 +7,7 @@ import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_c/native_toolchain_c.dart';
 
-const String _prebuiltReleaseTag = 'desktop-binaries-v1.8.1';
+const String _prebuiltReleaseTag = 'v1.8.1';
 const String _githubDownloadBaseUrl =
     'https://github.com/MSOB7YY/flutter_taglib/releases/download/$_prebuiltReleaseTag';
 

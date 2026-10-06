@@ -1,40 +1,51 @@
-name: Build Desktop Native Assets
+name: Build Native Assets
 
 permissions:
   contents: write
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: Release version used in artifact names and optional release tag
-        required: true
-        default: 1.2.0
-        type: string
-      publish_release:
-        description: Publish assets to a GitHub Release
-        required: true
-        default: false
-        type: boolean
   push:
     branches:
-      - main
-      - master
-    tags:
-      - desktop-binaries-v*
-      - android-binaries-v*
-
-run-name: >-
-  Build native assets
-  ${{
-    github.event_name == 'workflow_dispatch'
-      && format('(version {0})', inputs.version)
-      || ''
-  }}
+      - custom_taglib
+    paths:
+      - pubspec.yaml
 
 jobs:
+  version:
+    name: Resolve Version
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      should_build: ${{ steps.version.outputs.should_build }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pubspec version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(awk '/^version:/ { sub(/\r$/, "", $2); print $2; exit }' pubspec.yaml)"
+          tag="v${version}"
+          if ! grep -q "_prebuiltReleaseTag = '${tag}'" hook/build.dart; then
+            echo "::error file=hook/build.dart::_prebuiltReleaseTag must be '${tag}' to match pubspec.yaml"
+            exit 1
+          fi
+          should_build=true
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $tag already exists, skipping."
+            should_build=false
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+
   build-desktop:
     name: Build ${{ matrix.platform }}
+    needs: version
+    if: needs.version.outputs.should_build == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -53,7 +64,6 @@ jobs:
 
     env:
       FLUTTER_TAGLIB_BUILD_DESKTOP_FROM_SOURCE: "true"
-      FLUTTER_TAGLIB_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -142,16 +152,17 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}
+          name: ${{ matrix.platform }}
           path: dist/${{ matrix.output-name }}
 
   build-android:
     name: Build Android
+    needs: version
+    if: needs.version.outputs.should_build == 'true'
     runs-on: ubuntu-22.04
 
     env:
       FLUTTER_TAGLIB_BUILD_ANDROID_FROM_SOURCE: "true"
-      FLUTTER_TAGLIB_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -198,16 +209,12 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-binaries${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}
+          name: android-binaries
           path: dist/libflutter_taglib_android_*.so
 
   publish-release:
     name: Publish Release Assets
-    needs: [build-desktop, build-android]
-    if: >-
-      startsWith(github.ref, 'refs/tags/desktop-binaries-v') ||
-      startsWith(github.ref, 'refs/tags/android-binaries-v') ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    needs: [version, build-desktop, build-android]
     runs-on: ubuntu-22.04
 
     steps:
@@ -216,27 +223,15 @@ jobs:
         with:
           path: dist
 
-      - name: Determine release tag
-        id: release_tag
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=desktop-binaries-v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_tag.outputs.tag }}
-          name: ${{ steps.release_tag.outputs.tag }}
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
           generate_release_notes: false
-          files: |
-            dist/windows-x64${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}/flutter_taglib_windows_x64.dll
-            dist/linux-x64${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}/libflutter_taglib_linux_x64.so
-            dist/android-binaries${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}/libflutter_taglib_android_arm64-v8a.so
-            dist/android-binaries${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}/libflutter_taglib_android_armeabi-v7a.so
-            dist/android-binaries${{ github.event_name == 'workflow_dispatch' && format('-v{0}', inputs.version) || '' }}/libflutter_taglib_android_x86_64.so
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: dist/*/*
