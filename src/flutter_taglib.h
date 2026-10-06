@@ -124,6 +124,12 @@ FFI_PLUGIN_EXPORT int taglib_bridge_properties_value_count(TagLibBridgePropertie
 FFI_PLUGIN_EXPORT const char* taglib_bridge_properties_value(TagLibBridgeProperties* props, const char* key, int value_index);
 FFI_PLUGIN_EXPORT void taglib_bridge_properties_add(TagLibBridgeProperties* props, const char* key, const char* value);
 
+// Replaces the file's chapters, count 0 removes them. Each chapter ends where
+// the next one starts, the last one at the end of the file. Written as ID3v2
+// CHAP frames, MP4 Nero chapters, Matroska chapters or Xiph CHAPTERxxx comments.
+// Returns 1 on success, 0 when the format has no chapters support.
+FFI_PLUGIN_EXPORT int taglib_bridge_set_chapters(TagLibBridgeFile* file, const uint32_t* starts_ms, const char* const* titles, int32_t count);
+
 // Frees memory handed over by the bridge, such as TagLibBatchItem.cover.
 FFI_PLUGIN_EXPORT void taglib_bridge_free(void* data);
 
@@ -147,6 +153,12 @@ typedef struct TagLibBatchItem {
     uint32_t properties_count;
     uint32_t properties_size;
     const uint8_t* properties;
+    // Packed chapters sorted by start, only when requested: chapters_count entries of
+    // [u32 start ms][u32 end ms, UINT32_MAX when unknown][u32 title length][title]
+    // in native byte order, titles are UTF-8 without terminators.
+    uint32_t chapters_count;
+    uint32_t chapters_size;
+    const uint8_t* chapters;
     const char* format; // NULL when undetermined
     const char* bitrate_mode;
     // Front cover bytes, NULL when absent or not requested. Owned by the
@@ -163,7 +175,7 @@ typedef void (*TagLibBatchItemCallback)(TagLibBatchItem* item);
 // on_item is called once per path from a worker thread, the receiver releases
 // each item with taglib_batch_item_free. The paths are copied.
 // Returns NULL when no thread could be started.
-FFI_PLUGIN_EXPORT TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, const char* http_headers_json, int32_t http_timeout_ms, TagLibBatchItemCallback on_item);
+FFI_PLUGIN_EXPORT TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, int32_t read_chapters, const char* http_headers_json, int32_t http_timeout_ms, TagLibBatchItemCallback on_item);
 
 // Waits for the worker threads to exit and frees the batch. Call once every
 // item was received.

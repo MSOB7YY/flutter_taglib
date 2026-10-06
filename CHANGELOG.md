@@ -1,3 +1,7 @@
+## 1.8.0
+* feat: chapters, read with `readBatchNative(readChapters: true)` and written with `TagLibFile.setChapters`, from ID3v2 CHAP frames, MP4 Nero/QuickTime chapters, Matroska chapters and `CHAPTERxxx` comments
+* build: TagLib `2.3.1-c3`, mp4 chapters are read from the already parsed atoms
+
 ## 1.7.0
 * feat: read tags from http(s) urls with range requests (from upstream), also in `readBatchNative` with `headers`
 * perf: http reads keep one connection per file and fetch consecutive missing blocks in one request

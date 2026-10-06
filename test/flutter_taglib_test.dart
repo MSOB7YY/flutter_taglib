@@ -556,6 +556,57 @@ void main() {
     });
   });
 
+  group('Chapters', () {
+    const chapters = [
+      TagLibChapter(start: Duration.zero, title: 'Intro – ابدأ'),
+      TagLibChapter(start: Duration(milliseconds: 1250), title: 'Second'),
+      TagLibChapter(start: Duration(milliseconds: 2500), title: 'Outro'),
+    ];
+
+    for (final ext in ['mp3', 'm4a', 'flac', 'ogg', 'opus', 'wav', 'aiff']) {
+      test('Write, read & remove chapters ($ext)', () async {
+        final dir = Directory.systemTemp.createTempSync('flutter_taglib_chapters');
+        try {
+          final path = '${dir.path}/chapters.$ext';
+          File('test/assets/01 TempleOS Hymn Risen (Remix).$ext').copySync(path);
+          final file = TagLibFile.open(path)!;
+          expect(file.setChapters(chapters), isTrue);
+          expect(file.save(), isTrue);
+          file.close();
+
+          final res = (await TagLibFile.readBatchNative([path], readChapters: true).toList()).single;
+          expect(res.chapters.map((c) => c.start), equals(chapters.map((c) => c.start)));
+          expect(res.chapters.map((c) => c.title), equals(chapters.map((c) => c.title)));
+
+          final reopened = TagLibFile.open(path)!;
+          expect(reopened.setChapters(const []), isTrue);
+          expect(reopened.save(), isTrue);
+          reopened.close();
+          final cleared = (await TagLibFile.readBatchNative([path], readChapters: true).toList()).single;
+          expect(cleared.chapters, isEmpty);
+        } finally {
+          dir.deleteSync(recursive: true);
+        }
+      });
+    }
+
+    test('Chapters are only read when requested', () async {
+      final dir = Directory.systemTemp.createTempSync('flutter_taglib_chapters');
+      try {
+        final path = '${dir.path}/chapters.mp3';
+        File('test/assets/01 TempleOS Hymn Risen (Remix).mp3').copySync(path);
+        final file = TagLibFile.open(path)!;
+        file.setChapters(chapters);
+        file.save();
+        file.close();
+        final res = (await TagLibFile.readBatchNative([path]).toList()).single;
+        expect(res.chapters, isEmpty);
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+  });
+
   group('HTTP Range Streaming', () {
     late HttpServer server;
     int totalBytesServed = 0;

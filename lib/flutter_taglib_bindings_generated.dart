@@ -420,6 +420,25 @@ external void taglib_bridge_properties_add(
   ffi.Pointer<ffi.Char> value,
 );
 
+/// Replaces the file's chapters, count 0 removes them. Each chapter ends where
+/// the next one starts, the last one at the end of the file. Written as ID3v2
+/// CHAP frames, MP4 Nero chapters, Matroska chapters or Xiph CHAPTERxxx comments.
+/// Returns 1 on success, 0 when the format has no chapters support.
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<TagLibBridgeFile>,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+    ffi.Int32,
+  )
+>()
+external int taglib_bridge_set_chapters(
+  ffi.Pointer<TagLibBridgeFile> file,
+  ffi.Pointer<ffi.Uint32> starts_ms,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> titles,
+  int count,
+);
+
 /// Frees memory handed over by the bridge, such as TagLibBatchItem.cover.
 @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>()
 external void taglib_bridge_free(ffi.Pointer<ffi.Void> data);
@@ -437,6 +456,7 @@ external void taglib_bridge_free(ffi.Pointer<ffi.Void> data);
     ffi.Int32,
     ffi.Int32,
     ffi.Int32,
+    ffi.Int32,
     ffi.Pointer<ffi.Char>,
     ffi.Int32,
     TagLibBatchItemCallback,
@@ -448,6 +468,7 @@ external ffi.Pointer<TagLibBatch> taglib_batch_start(
   int threads,
   int read_style,
   int read_cover,
+  int read_chapters,
   ffi.Pointer<ffi.Char> http_headers_json,
   int http_timeout_ms,
   TagLibBatchItemCallback on_item,
@@ -517,6 +538,17 @@ final class TagLibBatchItem extends ffi.Struct {
   external int properties_size;
 
   external ffi.Pointer<ffi.Uint8> properties;
+
+  /// Packed chapters sorted by start, only when requested: chapters_count entries of
+  /// [u32 start ms][u32 end ms, UINT32_MAX when unknown][u32 title length][title]
+  /// in native byte order, titles are UTF-8 without terminators.
+  @ffi.Uint32()
+  external int chapters_count;
+
+  @ffi.Uint32()
+  external int chapters_size;
+
+  external ffi.Pointer<ffi.Uint8> chapters;
 
   /// NULL when undetermined
   external ffi.Pointer<ffi.Char> format;

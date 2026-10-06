@@ -32,6 +32,14 @@
 #include <it/itfile.h>
 #include <xm/xmfile.h>
 #include <tpropertymap.h>
+#include <mpeg/id3v2/id3v2tag.h>
+#include <mpeg/id3v2/frames/chapterframe.h>
+#include <mpeg/id3v2/frames/tableofcontentsframe.h>
+#include <mpeg/id3v2/frames/textidentificationframe.h>
+#include <matroska/matroskachapters.h>
+#include <matroska/matroskachapteredition.h>
+#include <matroska/matroskachapter.h>
+#include <ogg/xiphcomment.h>
 
 #include <string>
 #include <vector>
@@ -2328,6 +2336,284 @@ void taglib_bridge_free(void* data) {
 } // extern "C"
 
 // by claude
+// Chapters: one sorted list whatever the container stores them as, ID3v2
+// CHAP frames, MP4 Nero/QuickTime chapters, Matroska editions or the
+// CHAPTERxxx/CHAPTERxxxNAME comments ffmpeg writes to Ogg & FLAC.
+
+static constexpr uint32_t kChapterEndUnknown = 0xFFFFFFFF;
+
+struct BridgeChapter {
+    uint32_t startMs;
+    uint32_t endMs;
+    TagLib::String title;
+};
+
+static uint32_t clamp_chapter_ms(long long ms) {
+    if (ms <= 0) return 0;
+    if (ms >= kChapterEndUnknown) return kChapterEndUnknown - 1;
+    return static_cast<uint32_t>(ms);
+}
+
+static TagLib::ID3v2::Tag* id3v2_tag_of(TagLib::File* f, bool create) {
+    if (auto* mpeg = dynamic_cast<TagLib::MPEG::File*>(f)) return mpeg->ID3v2Tag(create);
+    if (auto* wav = dynamic_cast<TagLib::RIFF::WAV::File*>(f)) return wav->ID3v2Tag();
+    if (auto* aiff = dynamic_cast<TagLib::RIFF::AIFF::File*>(f)) return aiff->tag();
+    if (auto* dsf = dynamic_cast<TagLib::DSF::File*>(f)) return dsf->tag();
+    if (auto* dsdiff = dynamic_cast<TagLib::DSDIFF::File*>(f)) return dsdiff->ID3v2Tag(create);
+    if (auto* trueAudio = dynamic_cast<TagLib::TrueAudio::File*>(f)) return trueAudio->ID3v2Tag(create);
+    return nullptr;
+}
+
+static TagLib::Ogg::XiphComment* xiph_comment_of(TagLib::File* f) {
+    if (auto* vorbis = dynamic_cast<TagLib::Ogg::Vorbis::File*>(f)) return vorbis->tag();
+    if (auto* opus = dynamic_cast<TagLib::Ogg::Opus::File*>(f)) return opus->tag();
+    if (auto* speex = dynamic_cast<TagLib::Ogg::Speex::File*>(f)) return speex->tag();
+    if (auto* oggFlac = dynamic_cast<TagLib::Ogg::FLAC::File*>(f)) return oggFlac->tag();
+    if (auto* flac = dynamic_cast<TagLib::FLAC::File*>(f)) return flac->xiphComment(true);
+    return nullptr;
+}
+
+static void read_id3v2_chapters(TagLib::ID3v2::Tag* tag, std::vector<BridgeChapter>& out) {
+    for (auto* frame : tag->frameList("CHAP")) {
+        auto* chapter = dynamic_cast<TagLib::ID3v2::ChapterFrame*>(frame);
+        if (!chapter) continue;
+        TagLib::String title;
+        const auto& titleFrames = chapter->embeddedFrameList("TIT2");
+        if (!titleFrames.isEmpty()) title = titleFrames.front()->toString();
+        const unsigned int startMs = chapter->startTime();
+        const unsigned int endMs = chapter->endTime();
+        out.push_back({clamp_chapter_ms(startMs), endMs > startMs ? clamp_chapter_ms(endMs) : kChapterEndUnknown, title});
+    }
+}
+
+// MP4::Chapter times are in milliseconds, the 100ns atom units are converted by TagLib.
+static void read_mp4_chapters(TagLib::MP4::File* mp4, std::vector<BridgeChapter>& out) {
+    auto chapters = mp4->neroChapters();
+    if (chapters.isEmpty()) chapters = mp4->qtChapters();
+    for (const auto& chapter : chapters) {
+        out.push_back({clamp_chapter_ms(chapter.startTime()), kChapterEndUnknown, chapter.title()});
+    }
+}
+
+// Matroska chapter times are in nanoseconds.
+static void read_matroska_chapters(TagLib::Matroska::File* matroska, std::vector<BridgeChapter>& out) {
+    const auto* chapters = matroska->chapters();
+    if (!chapters) return;
+    const auto& editions = chapters->chapterEditionList();
+    if (editions.isEmpty()) return;
+    const TagLib::Matroska::ChapterEdition* edition = &editions.front();
+    for (const auto& candidate : editions) {
+        if (candidate.isDefault()) {
+            edition = &candidate;
+            break;
+        }
+    }
+    for (const auto& chapter : edition->chapterList()) {
+        if (chapter.isHidden()) continue;
+        const auto& displays = chapter.displayList();
+        const TagLib::String title = displays.isEmpty() ? TagLib::String() : displays.front().string();
+        const auto startNs = chapter.timeStart();
+        const auto endNs = chapter.timeEnd();
+        const uint32_t endMs = endNs > startNs ? clamp_chapter_ms(static_cast<long long>(endNs / 1000000)) : kChapterEndUnknown;
+        out.push_back({clamp_chapter_ms(static_cast<long long>(startNs / 1000000)), endMs, title});
+    }
+}
+
+// [[h:]m:]s[.fff], as in CHAPTER001=00:01:02.500
+static bool parse_chapter_timestamp(const std::string& text, uint32_t& outMs) {
+    const size_t length = text.size();
+    size_t i = 0;
+    long long seconds = 0;
+    int fieldsCount = 0;
+    while (true) {
+        if (i >= length || !std::isdigit(static_cast<unsigned char>(text[i]))) return false;
+        long long field = 0;
+        while (i < length && std::isdigit(static_cast<unsigned char>(text[i]))) {
+            field = field * 10 + (text[i] - '0');
+            if (field > 100000000) return false;
+            i++;
+        }
+        seconds = seconds * 60 + field;
+        if (++fieldsCount > 3) return false;
+        if (i < length && text[i] == ':') {
+            i++;
+            continue;
+        }
+        break;
+    }
+    long long fractionMs = 0;
+    if (i < length && text[i] == '.') {
+        i++;
+        long long scale = 100;
+        while (i < length && std::isdigit(static_cast<unsigned char>(text[i]))) {
+            fractionMs += (text[i] - '0') * scale;
+            scale /= 10;
+            i++;
+        }
+    }
+    if (i != length) return false;
+    outMs = clamp_chapter_ms(seconds * 1000 + fractionMs);
+    return true;
+}
+
+// checked in place, so the other keys of every file aren't converted.
+static bool has_chapter_key_prefix(const TagLib::String& key) {
+    static constexpr char kPrefix[] = "CHAPTER";
+    if (key.size() < sizeof(kPrefix) - 1) return false;
+    for (unsigned int i = 0; i < sizeof(kPrefix) - 1; i++) {
+        if (key[i] != static_cast<wchar_t>(kPrefix[i])) return false;
+    }
+    return true;
+}
+
+static void read_comment_chapters(const TagLib::PropertyMap& properties, std::vector<BridgeChapter>& out) {
+    std::map<unsigned int, BridgeChapter> byNumber;
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        if (it->second.isEmpty() || !has_chapter_key_prefix(it->first)) continue;
+        const std::string key = it->first.to8Bit(true);
+        size_t i = 7;
+        unsigned int number = 0;
+        while (i < key.size() && i < 12 && std::isdigit(static_cast<unsigned char>(key[i]))) {
+            number = number * 10 + (key[i] - '0');
+            i++;
+        }
+        if (i == 7) continue;
+        const bool isStart = i == key.size();
+        const bool isName = !isStart && key.compare(i, std::string::npos, "NAME") == 0;
+        if (!isStart && !isName) continue;
+        auto& chapter = byNumber.try_emplace(number, BridgeChapter{kChapterEndUnknown, kChapterEndUnknown, TagLib::String()}).first->second;
+        if (isName) {
+            chapter.title = it->second.front();
+        } else {
+            uint32_t startMs = 0;
+            if (parse_chapter_timestamp(it->second.front().to8Bit(true), startMs)) chapter.startMs = startMs;
+        }
+    }
+    for (auto& entry : byNumber) {
+        if (entry.second.startMs != kChapterEndUnknown) out.push_back(std::move(entry.second));
+    }
+}
+
+static std::vector<BridgeChapter> read_chapters(TagLib::File* f, const TagLib::PropertyMap& properties) {
+    std::vector<BridgeChapter> chapters;
+    if (auto* mp4 = dynamic_cast<TagLib::MP4::File*>(f)) {
+        read_mp4_chapters(mp4, chapters);
+    } else if (auto* matroska = dynamic_cast<TagLib::Matroska::File*>(f)) {
+        read_matroska_chapters(matroska, chapters);
+    } else if (auto* id3v2 = id3v2_tag_of(f, false)) {
+        read_id3v2_chapters(id3v2, chapters);
+    }
+    if (chapters.empty()) read_comment_chapters(properties, chapters);
+    std::stable_sort(chapters.begin(), chapters.end(), [](const BridgeChapter& a, const BridgeChapter& b) { return a.startMs < b.startMs; });
+    return chapters;
+}
+
+static void write_id3v2_chapters(TagLib::ID3v2::Tag* tag, const std::vector<BridgeChapter>& chapters) {
+    tag->removeFrames("CHAP");
+    tag->removeFrames("CTOC");
+    if (chapters.empty()) return;
+    TagLib::ByteVectorList elementIds;
+    for (size_t i = 0; i < chapters.size(); i++) {
+        const auto& chapter = chapters[i];
+        const TagLib::ByteVector elementId = TagLib::ByteVector("chp") + TagLib::String::number(static_cast<int>(i)).data(TagLib::String::Latin1);
+        elementIds.append(elementId);
+        auto* titleFrame = new TagLib::ID3v2::TextIdentificationFrame("TIT2", TagLib::String::UTF8);
+        titleFrame->setText(chapter.title);
+        TagLib::ID3v2::FrameList embeddedFrames;
+        embeddedFrames.append(titleFrame);
+        tag->addFrame(new TagLib::ID3v2::ChapterFrame(elementId, chapter.startMs, chapter.endMs, 0xFFFFFFFF, 0xFFFFFFFF, embeddedFrames));
+    }
+    auto* toc = new TagLib::ID3v2::TableOfContentsFrame("toc", elementIds);
+    toc->setIsTopLevel(true);
+    toc->setIsOrdered(true);
+    tag->addFrame(toc);
+}
+
+static void write_mp4_chapters(TagLib::MP4::File* mp4, const std::vector<BridgeChapter>& chapters) {
+    TagLib::MP4::ChapterList list;
+    for (const auto& chapter : chapters) {
+        list.append(TagLib::MP4::Chapter(chapter.title, chapter.startMs));
+    }
+    mp4->setNeroChapters(list);
+}
+
+static void write_matroska_chapters(TagLib::Matroska::File* matroska, const std::vector<BridgeChapter>& chapters) {
+    auto* target = matroska->chapters(!chapters.empty());
+    if (!target) return;
+    target->clear();
+    if (chapters.empty()) return;
+    TagLib::List<TagLib::Matroska::Chapter> list;
+    for (const auto& chapter : chapters) {
+        TagLib::List<TagLib::Matroska::Chapter::Display> displays;
+        displays.append(TagLib::Matroska::Chapter::Display(chapter.title, "und"));
+        const auto startNs = static_cast<TagLib::Matroska::Chapter::Time>(chapter.startMs) * 1000000;
+        const auto endNs = static_cast<TagLib::Matroska::Chapter::Time>(chapter.endMs) * 1000000;
+        list.append(TagLib::Matroska::Chapter(startNs, endNs, displays, 0));
+    }
+    target->addChapterEdition(TagLib::Matroska::ChapterEdition(list, true));
+}
+
+static std::string format_chapter_timestamp(uint32_t ms) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%02u:%02u:%02u.%03u", ms / 3600000, ms / 60000 % 60, ms / 1000 % 60, ms % 1000);
+    return buffer;
+}
+
+static void write_comment_chapters(TagLib::Ogg::XiphComment* comment, const std::vector<BridgeChapter>& chapters) {
+    TagLib::StringList oldKeys;
+    for (const auto& field : comment->fieldListMap()) {
+        if (field.first.startsWith("CHAPTER")) oldKeys.append(field.first);
+    }
+    for (const auto& key : oldKeys) {
+        comment->removeFields(key);
+    }
+    for (size_t i = 0; i < chapters.size(); i++) {
+        char key[24];
+        std::snprintf(key, sizeof(key), "CHAPTER%03u", static_cast<unsigned int>(i + 1));
+        comment->addField(key, format_chapter_timestamp(chapters[i].startMs));
+        comment->addField(std::string(key) + "NAME", chapters[i].title);
+    }
+}
+
+extern "C" {
+
+int taglib_bridge_set_chapters(TagLibBridgeFile* file, const uint32_t* starts_ms, const char* const* titles, int32_t count) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
+    if (count > 0 && (!starts_ms || !titles)) return 0;
+    try {
+        TagLib::File* f = file->fileRef->file();
+        const auto* audioProperties = f->audioProperties();
+        const uint32_t durationMs = audioProperties ? clamp_chapter_ms(audioProperties->lengthInMilliseconds()) : 0;
+
+        std::vector<BridgeChapter> chapters;
+        chapters.reserve(static_cast<size_t>(count > 0 ? count : 0));
+        for (int32_t i = 0; i < count; i++) {
+            const uint32_t startMs = starts_ms[i];
+            const uint32_t nextMs = i + 1 < count ? starts_ms[i + 1] : durationMs;
+            const char* title = titles[i];
+            chapters.push_back({startMs, nextMs > startMs ? nextMs : startMs, TagLib::String(title ? title : "", TagLib::String::UTF8)});
+        }
+
+        if (auto* mp4 = dynamic_cast<TagLib::MP4::File*>(f)) {
+            write_mp4_chapters(mp4, chapters);
+        } else if (auto* matroska = dynamic_cast<TagLib::Matroska::File*>(f)) {
+            write_matroska_chapters(matroska, chapters);
+        } else if (auto* id3v2 = id3v2_tag_of(f, true)) {
+            write_id3v2_chapters(id3v2, chapters);
+        } else if (auto* comment = xiph_comment_of(f)) {
+            write_comment_chapters(comment, chapters);
+        } else {
+            return 0;
+        }
+        return 1;
+    } catch (...) {
+        return 0;
+    }
+}
+
+} // extern "C"
+
+// by claude
 // Batch reading: a pool of native threads opens and parses the files, and hands
 // each result to the caller as one packed allocation. Dart isolates are not
 // involved, so a slow disk never holds a Dart mutator thread.
@@ -2337,6 +2623,7 @@ struct TagLibBatch {
     std::atomic<int32_t> nextIndex{0};
     int readStyle;
     bool readCover;
+    bool readChapters;
     std::map<std::string, std::string> httpHeaders;
     int httpTimeoutMs;
     TagLibBatchItemCallback onItem;
@@ -2354,7 +2641,7 @@ static void batch_append_string(std::string& buffer, const TagLib::String& value
 }
 
 // Reads everything that can throw before allocating, so a failure leaks nothing.
-static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, bool readCover) {
+static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, bool readCover, bool readChapters) {
     std::string region;
     uint32_t propertiesCount = 0;
     const TagLib::PropertyMap properties = file->fileRef->properties();
@@ -2367,6 +2654,17 @@ static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, b
         propertiesCount++;
     }
     const size_t propertiesSize = region.size();
+
+    uint32_t chaptersCount = 0;
+    if (readChapters) {
+        for (const auto& chapter : read_chapters(file->fileRef->file(), properties)) {
+            batch_append_u32(region, chapter.startMs);
+            batch_append_u32(region, chapter.endMs);
+            batch_append_string(region, chapter.title);
+            chaptersCount++;
+        }
+    }
+    const size_t chaptersSize = region.size() - propertiesSize;
 
     const char* format = taglib_bridge_get_format(file);
     const size_t formatOffset = region.size();
@@ -2415,6 +2713,9 @@ static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, b
     item->properties_count = propertiesCount;
     item->properties_size = static_cast<uint32_t>(propertiesSize);
     item->properties = regionPtr;
+    item->chapters_count = chaptersCount;
+    item->chapters_size = static_cast<uint32_t>(chaptersSize);
+    item->chapters = regionPtr + propertiesSize;
     item->format = format ? reinterpret_cast<const char*>(regionPtr + formatOffset) : nullptr;
     item->bitrate_mode = reinterpret_cast<const char*>(regionPtr + bitrateModeOffset);
     item->cover = cover;
@@ -2493,7 +2794,7 @@ static void batch_worker(TagLibBatch* batch) {
         TagLibBridgeFile* file = batch_open_read_only(batch, batch->paths[index].c_str());
         if (file) {
             try {
-                item = batch_read_item(index, file, batch->readCover);
+                item = batch_read_item(index, file, batch->readCover, batch->readChapters);
             } catch (...) {
             }
             taglib_bridge_close(file);
@@ -2514,7 +2815,7 @@ static void batch_worker(TagLibBatch* batch) {
 
 extern "C" {
 
-TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, const char* http_headers_json, int32_t http_timeout_ms, TagLibBatchItemCallback on_item) {
+TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t threads, int32_t read_style, int32_t read_cover, int32_t read_chapters, const char* http_headers_json, int32_t http_timeout_ms, TagLibBatchItemCallback on_item) {
     if (!paths || count <= 0 || !on_item) return nullptr;
 
     auto* batch = new TagLibBatch();
@@ -2524,6 +2825,7 @@ TagLibBatch* taglib_batch_start(const char* const* paths, int32_t count, int32_t
     }
     batch->readStyle = read_style;
     batch->readCover = read_cover != 0;
+    batch->readChapters = read_chapters != 0;
     batch->httpHeaders = parse_headers_json(http_headers_json);
     batch->httpTimeoutMs = http_timeout_ms;
     batch->onItem = on_item;

@@ -341,6 +341,15 @@ void taglib_bridge_properties_add(
   generated.taglib_bridge_properties_add(properties, key, value);
 }
 
+int taglib_bridge_set_chapters(
+  ffi.Pointer<TagLibBridgeFile> file,
+  ffi.Pointer<ffi.Uint32> startsMs,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> titles,
+  int count,
+) {
+  return generated.taglib_bridge_set_chapters(file, startsMs, titles, count);
+}
+
 ffi.Pointer<ffi.NativeFinalizerFunction> get taglib_bridge_free_address => generated.addresses.taglib_bridge_free;
 
 ffi.Pointer<TagLibBatch> taglib_batch_start(
@@ -349,11 +358,12 @@ ffi.Pointer<TagLibBatch> taglib_batch_start(
   int threads,
   int readStyle,
   int readCover,
+  int readChapters,
   ffi.Pointer<ffi.Char> httpHeadersJson,
   int httpTimeoutMs,
   generated.TagLibBatchItemCallback onItem,
 ) {
-  return generated.taglib_batch_start(paths, count, threads, readStyle, readCover, httpHeadersJson, httpTimeoutMs, onItem);
+  return generated.taglib_batch_start(paths, count, threads, readStyle, readCover, readChapters, httpHeadersJson, httpTimeoutMs, onItem);
 }
 
 void taglib_batch_free(ffi.Pointer<TagLibBatch> batch) {

@@ -779,11 +779,13 @@ class TagLibFile {
   ///
   /// [threads] defaults to the number of processors.
   /// `http(s)://` paths are read with range requests, sending [headers].
+  /// [readChapters] fills [TagLibBatchResult.chapters].
   static Stream<TagLibBatchResult> readBatchNative(
     List<String> paths, {
     int threads = 0,
     TagLibAudioPropertiesStyle audioPropertiesStyle = TagLibAudioPropertiesStyle.average,
     bool readCover = false,
+    bool readChapters = false,
     Map<String, String>? headers,
     Duration httpTimeout = const Duration(seconds: 15),
   }) async* {
@@ -799,7 +801,7 @@ class TagLibFile {
     final effectiveThreads = threads > 0 ? threads : Platform.numberOfProcessors;
     String? headersJson;
     if (headers != null && headers.isNotEmpty) headersJson = jsonEncode(headers);
-    yield* _startBatchNative(paths, effectiveThreads, audioPropertiesStyle, readCover, headersJson, httpTimeout);
+    yield* _startBatchNative(paths, effectiveThreads, audioPropertiesStyle, readCover, readChapters, headersJson, httpTimeout);
   }
 
   static Stream<TagLibBatchResult> _startBatchNative(
@@ -807,6 +809,7 @@ class TagLibFile {
     int threads,
     TagLibAudioPropertiesStyle audioPropertiesStyle,
     bool readCover,
+    bool readChapters,
     String? headersJson,
     Duration httpTimeout,
   ) {
@@ -842,6 +845,7 @@ class TagLibFile {
         threads,
         audioPropertiesStyle.value,
         readCover ? 1 : 0,
+        readChapters ? 1 : 0,
         headersJsonPtr.cast(),
         httpTimeout.inMilliseconds,
         onItem.nativeFunction,
@@ -862,6 +866,7 @@ class TagLibFile {
   }
 
   static const _batchUtf8Decoder = Utf8Decoder(allowMalformed: true);
+  static const _kChapterEndUnknown = 0xFFFFFFFF;
 
   static TagLibBatchResult _decodeBatchItem(
     bindings.TagLibBatchItem item,
@@ -875,6 +880,7 @@ class TagLibFile {
         path: path,
         audioInfo: null,
         properties: const {},
+        chapters: const [],
         coverData: null,
       );
     }
@@ -904,6 +910,32 @@ class TagLibFile {
         }
         properties[key] = values;
       }
+    }
+
+    List<TagLibChapter> chapters = const [];
+    final chaptersCount = item.chapters_count;
+    if (chaptersCount > 0) {
+      final bytes = item.chapters.asTypedList(item.chapters_size);
+      final data = ByteData.sublistView(bytes);
+      var offset = 0;
+      chapters = List<TagLibChapter>.generate(
+        chaptersCount,
+        (_) {
+          final startMS = data.getUint32(offset, Endian.host);
+          final endMS = data.getUint32(offset + 4, Endian.host);
+          final titleLength = data.getUint32(offset + 8, Endian.host);
+          offset += 12;
+          final titleEnd = offset + titleLength;
+          final title = _batchUtf8Decoder.convert(bytes, offset, titleEnd);
+          offset = titleEnd;
+          return TagLibChapter(
+            start: Duration(milliseconds: startMS),
+            end: endMS == _kChapterEndUnknown ? null : Duration(milliseconds: endMS),
+            title: title,
+          );
+        },
+        growable: false,
+      );
     }
 
     String? format;
@@ -939,6 +971,7 @@ class TagLibFile {
       path: path,
       audioInfo: audioInfo,
       properties: properties,
+      chapters: chapters,
       coverData: coverData,
     );
   }
@@ -1495,6 +1528,33 @@ class TagLibFile {
     return setPictures([Picture(bytes: data, mimeType: mimeType)]);
   }
 
+  /// Replaces the chapters of the file, sorted by [TagLibChapter.start].
+  ///
+  /// Each chapter ends where the next one starts, so [TagLibChapter.end] is ignored.
+  /// Pass an empty list to remove all chapters.
+  ///
+  /// Returns `false` when the format can't hold chapters.
+  bool setChapters(List<TagLibChapter> chapters) {
+    _checkClosed();
+    final count = chapters.length;
+    final startsPtr = calloc<ffi.Uint32>(count == 0 ? 1 : count);
+    final titlesPtr = calloc<ffi.Pointer<ffi.Char>>(count == 0 ? 1 : count);
+    try {
+      for (var i = 0; i < count; i++) {
+        final chapter = chapters[i];
+        startsPtr[i] = chapter.start.inMilliseconds;
+        titlesPtr[i] = chapter.title.toNativeUtf8(allocator: calloc).cast();
+      }
+      return bindings.taglib_bridge_set_chapters(_handle, startsPtr, titlesPtr, count) == 1;
+    } finally {
+      for (var i = 0; i < count; i++) {
+        calloc.free(titlesPtr[i]);
+      }
+      calloc.free(titlesPtr);
+      calloc.free(startsPtr);
+    }
+  }
+
   /// (iOS only) Lets the user pick an audio file for editing.
   ///
   /// The returned object tracks the working copy and can commit changes back
@@ -1761,6 +1821,7 @@ class TagLibBatchResult {
     required this.path,
     required this.audioInfo,
     required this.properties,
+    required this.chapters,
     required this.coverData,
   });
 
@@ -1774,10 +1835,36 @@ class TagLibBatchResult {
   /// Same as [TagLibFile.properties].
   final Map<String, List<String>> properties;
 
+  /// Sorted by [TagLibChapter.start], only when requested and present.
+  final List<TagLibChapter> chapters;
+
   /// Front cover bytes, only when requested and present.
   final Uint8List? coverData;
 
   bool get success => audioInfo != null;
+}
+
+/// A chapter read by [TagLibFile.readBatchNative] or written by [TagLibFile.setChapters].
+///
+/// Read from ID3v2 CHAP frames, MP4 Nero/QuickTime chapters, Matroska chapters
+/// or `CHAPTERxxx`/`CHAPTERxxxNAME` comments.
+class TagLibChapter {
+  const TagLibChapter({
+    required this.start,
+    this.end,
+    required this.title,
+  });
+
+  final Duration start;
+
+  /// `null` when the file doesn't store it, the chapter then lasts until the next one.
+  final Duration? end;
+
+  /// Empty when the chapter has no title.
+  final String title;
+
+  @override
+  String toString() => 'TagLibChapter(start: $start, end: $end, title: $title)';
 }
 
 /// Represents detailed audio properties of a file.
