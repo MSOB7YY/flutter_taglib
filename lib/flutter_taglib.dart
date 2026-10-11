@@ -1440,6 +1440,66 @@ class TagLibFile {
     return result;
   }
 
+  /// Returns the first embedded picture typed [pictureType] (ex: `Back Cover`),
+  /// or `null` if there is none. Only the matching picture's bytes are copied.
+  Picture? pictureOfType(String pictureType) {
+    _checkClosed();
+    final picturesHandle = bindings.taglib_bridge_pictures_get(_handle);
+    if (picturesHandle == ffi.nullptr) return null;
+
+    try {
+      final count = bindings.taglib_bridge_pictures_size(picturesHandle);
+      for (var index = 0; index < count; index++) {
+        final type = _pointerToString(
+          bindings.taglib_bridge_pictures_picture_type(picturesHandle, index),
+        );
+        if (type != pictureType) continue;
+
+        final dataSize = bindings.taglib_bridge_pictures_data_size(
+          picturesHandle,
+          index,
+        );
+        if (dataSize == 0) continue;
+
+        final buffer = malloc<ffi.Uint8>(dataSize);
+        try {
+          final copied = bindings.taglib_bridge_pictures_data(
+            picturesHandle,
+            index,
+            buffer,
+            dataSize,
+          );
+          if (copied != 1) continue;
+
+          final bytes = Uint8List.fromList(buffer.asTypedList(dataSize));
+          final mimeType =
+              _pointerToString(
+                bindings.taglib_bridge_pictures_mime_type(
+                  picturesHandle,
+                  index,
+                ),
+              ) ??
+              'image/jpeg';
+          final description = _pointerToString(
+            bindings.taglib_bridge_pictures_description(picturesHandle, index),
+          );
+          return Picture(
+            bytes: bytes,
+            mimeType: mimeType,
+            pictureType: pictureType,
+            description: description,
+          );
+        } finally {
+          malloc.free(buffer);
+        }
+      }
+    } finally {
+      bindings.taglib_bridge_pictures_free(picturesHandle);
+    }
+
+    return null;
+  }
+
   /// Retrieves the cover art image bytes as a [Uint8List].
   ///
   /// Returns picture typed `Front Cover', or the first picture, or `null` if the file has no cover art.

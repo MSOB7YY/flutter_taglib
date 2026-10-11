@@ -378,6 +378,12 @@ void main() {
           expect(file2.pictures.first.description, equals('front'));
           expect(file2.pictures.last.pictureType, equals('Back Cover'));
           expect(file2.pictures.last.description, equals('back'));
+
+          final backCover = file2.pictureOfType('Back Cover');
+          expect(backCover, isNotNull);
+          expect(backCover!.description, equals('back'));
+          expect(backCover.bytes, equals(coverBytes));
+          expect(file2.pictureOfType('Media'), isNull);
           file2.close();
         }
       }
