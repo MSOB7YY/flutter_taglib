@@ -1,3 +1,12 @@
+## 1.8.3
+* perf: local files are read through a block cached stream with positional reads instead of stdio, android sdcards read ~20x less per file (bionic sized the stdio buffer from the 128 KB `st_blksize` and refilled it after every seek)
+
+## 1.8.2
+* feat: `TagLibFile.pictureOfType`, copies only the embedded picture of the given type
+
+## 1.8.1
+* build: utfcpp `4.2.0`
+
 ## 1.8.0
 * feat: chapters, read with `readBatchNative(readChapters: true)` and written with `TagLibFile.setChapters`, from ID3v2 CHAP frames, MP4 Nero/QuickTime chapters, Matroska chapters and `CHAPTERxxx` comments
 * build: TagLib `2.3.1-c3`, mp4 chapters are read from the already parsed atoms

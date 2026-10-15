@@ -88,11 +88,17 @@
 #endif
 
 #include <cstdio>
+#include <cerrno>
 #include <iostream>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #ifdef __ANDROID__
 #include <jni.h>
-#include <unistd.h>
 #include <android/log.h>
 
 #undef JNIEXPORT
@@ -1367,36 +1373,10 @@ static bool fetch_http_range(
 #endif
 }
 
-class HttpRangeIOStream : public TagLib::IOStream {
+class BlockCachedIOStream : public TagLib::IOStream {
 public:
     static constexpr size_t kBlockSize = 65536; // 64 KB per block
     static constexpr size_t kMaxCachedBlocks = 24; // ~1.5 MB cache
-
-    HttpRangeIOStream(std::string url, std::map<std::string, std::string> headers, int timeout_ms)
-        : m_url(std::move(url)), m_headers(std::move(headers)), m_timeout_ms(timeout_ms), m_pos(0), m_length(0), m_isOpen(false)
-    {
-        std::vector<uint8_t> block0;
-        std::string err;
-        int64_t totalLen = -1;
-        bool ok = fetch_http_range(m_connection, m_url, m_headers, 0, kBlockSize, m_timeout_ms, totalLen, block0, err);
-        if (ok && !block0.empty()) {
-            m_isOpen = true;
-            if (totalLen > 0) {
-                m_length = totalLen;
-            } else {
-                m_length = static_cast<int64_t>(block0.size());
-            }
-            put_block(0, std::move(block0));
-        } else {
-            LOGE("HttpRangeIOStream init failed for %s: %s", m_url.c_str(), err.c_str());
-        }
-    }
-
-    ~HttpRangeIOStream() override = default;
-
-    TagLib::FileName name() const override {
-        return m_url.c_str();
-    }
 
     TagLib::ByteVector readBlock(size_t length) override {
         if (!m_isOpen || m_pos >= m_length || length == 0) {
@@ -1428,13 +1408,13 @@ public:
                 touch_lru(blockIndex);
                 source = &it->second;
             } else {
-                // one request for every missing block up to the end of this read, a big tag or cover
+                // one fetch for every missing block up to the end of this read, a big tag or cover
                 // would otherwise cost a round trip per block.
                 while (sourceEndIndex < lastBlockIndex && m_cache.find(sourceEndIndex + 1) == m_cache.end()) {
                     sourceEndIndex++;
                 }
-                if (!fetch_run(blockIndex, sourceEndIndex, runData)) break;
-                source = &runData;
+                source = fetch_run(blockIndex, sourceEndIndex, runData);
+                if (!source) break;
             }
 
             if (blockOffset >= source->size()) break;
@@ -1497,23 +1477,19 @@ public:
 
     void truncate(TagLib::offset_t) override {}
 
-private:
-    std::string m_url;
-    std::map<std::string, std::string> m_headers;
-    int m_timeout_ms;
-    int64_t m_pos;
-    int64_t m_length;
-    bool m_isOpen;
-    HttpRangeConnection m_connection;
+protected:
+    int64_t m_pos = 0;
+    int64_t m_length = 0;
+    bool m_isOpen = false;
 
-    std::unordered_map<int64_t, std::vector<uint8_t>> m_cache;
-    std::vector<int64_t> m_lruOrder;
+    virtual bool fetch_range(int64_t offset, size_t length, std::vector<uint8_t>& out) = 0;
 
-    void put_block(int64_t blockIndex, std::vector<uint8_t> data) {
-        if (m_cache.find(blockIndex) != m_cache.end()) {
-            m_cache[blockIndex] = std::move(data);
+    std::vector<uint8_t>& put_block(int64_t blockIndex, std::vector<uint8_t> data) {
+        auto it = m_cache.find(blockIndex);
+        if (it != m_cache.end()) {
+            it->second = std::move(data);
             touch_lru(blockIndex);
-            return;
+            return it->second;
         }
 
         if (m_cache.size() >= kMaxCachedBlocks) {
@@ -1522,9 +1498,15 @@ private:
             m_cache.erase(oldest);
         }
 
-        m_cache[blockIndex] = std::move(data);
         m_lruOrder.push_back(blockIndex);
+        auto& block = m_cache[blockIndex];
+        block = std::move(data);
+        return block;
     }
+
+private:
+    std::unordered_map<int64_t, std::vector<uint8_t>> m_cache;
+    std::vector<int64_t> m_lruOrder;
 
     void touch_lru(int64_t blockIndex) {
         auto it = std::find(m_lruOrder.begin(), m_lruOrder.end(), blockIndex);
@@ -1534,27 +1516,156 @@ private:
         m_lruOrder.push_back(blockIndex);
     }
 
-    // Fetches blocks [firstIndex, lastIndex] in one request, caching only the last one since reads
+    // Fetches blocks [firstIndex, lastIndex] at once, caching only the last one since reads
     // usually continue right after a run.
-    bool fetch_run(int64_t firstIndex, int64_t lastIndex, std::vector<uint8_t>& out) {
-        int64_t startOffset = firstIndex * kBlockSize;
-        if (startOffset >= m_length) return false;
+    const std::vector<uint8_t>* fetch_run(int64_t firstIndex, int64_t lastIndex, std::vector<uint8_t>& runData) {
+        const int64_t startOffset = firstIndex * kBlockSize;
+        if (startOffset >= m_length) return nullptr;
 
-        int64_t endOffset = std::min((lastIndex + 1) * static_cast<int64_t>(kBlockSize), m_length);
+        const int64_t endOffset = std::min((lastIndex + 1) * static_cast<int64_t>(kBlockSize), m_length);
+        const size_t runLength = static_cast<size_t>(endOffset - startOffset);
+        const bool didFetch = fetch_range(startOffset, runLength, runData);
+        if (!didFetch || runData.empty()) return nullptr;
+
+        if (firstIndex == lastIndex) return &put_block(lastIndex, std::move(runData));
+
+        const size_t lastBlockStart = static_cast<size_t>((lastIndex - firstIndex) * kBlockSize);
+        if (runData.size() > lastBlockStart) {
+            const auto lastBlockBegin = runData.begin() + lastBlockStart;
+            put_block(lastIndex, std::vector<uint8_t>(lastBlockBegin, runData.end()));
+        }
+        return &runData;
+    }
+};
+
+class HttpRangeIOStream : public BlockCachedIOStream {
+public:
+    HttpRangeIOStream(std::string url, std::map<std::string, std::string> headers, int timeout_ms)
+        : m_url(std::move(url)), m_headers(std::move(headers)), m_timeout_ms(timeout_ms)
+    {
+        std::vector<uint8_t> block0;
+        std::string err;
+        int64_t totalLen = -1;
+        bool ok = fetch_http_range(m_connection, m_url, m_headers, 0, kBlockSize, m_timeout_ms, totalLen, block0, err);
+        if (ok && !block0.empty()) {
+            m_isOpen = true;
+            if (totalLen > 0) {
+                m_length = totalLen;
+            } else {
+                m_length = static_cast<int64_t>(block0.size());
+            }
+            put_block(0, std::move(block0));
+        } else {
+            LOGE("HttpRangeIOStream init failed for %s: %s", m_url.c_str(), err.c_str());
+        }
+    }
+
+    TagLib::FileName name() const override {
+        return m_url.c_str();
+    }
+
+protected:
+    bool fetch_range(int64_t offset, size_t length, std::vector<uint8_t>& out) override {
+        const int64_t requestLength = static_cast<int64_t>(length);
         int64_t totalLen = -1;
         std::string err;
-        bool ok = fetch_http_range(m_connection, m_url, m_headers, startOffset, endOffset - startOffset, m_timeout_ms, totalLen, out, err);
-        if (!ok || out.empty()) {
-            LOGE("HttpRangeIOStream fetch blocks %lld-%lld failed: %s", (long long)firstIndex, (long long)lastIndex, err.c_str());
-            return false;
-        }
-
-        size_t lastBlockStart = static_cast<size_t>((lastIndex - firstIndex) * kBlockSize);
-        if (out.size() > lastBlockStart) {
-            put_block(lastIndex, std::vector<uint8_t>(out.begin() + lastBlockStart, out.end()));
-        }
-        return true;
+        const bool ok = fetch_http_range(m_connection, m_url, m_headers, offset, requestLength, m_timeout_ms, totalLen, out, err);
+        if (ok) return true;
+        LOGE("HttpRangeIOStream fetch %lld+%zu failed: %s", (long long)offset, length, err.c_str());
+        return false;
     }
+
+private:
+    std::string m_url;
+    std::map<std::string, std::string> m_headers;
+    int m_timeout_ms;
+    HttpRangeConnection m_connection;
+};
+
+// by claude
+// TagLib::FileStream goes through stdio on POSIX, bionic sizes its buffer from st_blksize
+// (128 KB on sdcard FUSE mounts) and refills it after every seek.
+class LocalFileIOStream : public BlockCachedIOStream {
+public:
+    explicit LocalFileIOStream(const char* path) {
+#ifdef _WIN32
+        const TagLib::String pathStr(path, TagLib::String::UTF8);
+        m_name = pathStr.toWString();
+        m_handle = CreateFileW(m_name.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        LARGE_INTEGER size;
+        if (m_handle != INVALID_HANDLE_VALUE && GetFileSizeEx(m_handle, &size)) {
+            m_length = size.QuadPart;
+            m_isOpen = true;
+        }
+#else
+        m_name = path;
+        const int fd = open(path, O_RDONLY | O_CLOEXEC);
+        adopt(fd);
+#endif
+    }
+
+#ifndef _WIN32
+    LocalFileIOStream(int ownedFd, const char* name) : m_name(name) {
+        adopt(ownedFd);
+    }
+#endif
+
+    ~LocalFileIOStream() override {
+#ifdef _WIN32
+        if (m_handle != INVALID_HANDLE_VALUE) CloseHandle(m_handle);
+#else
+        if (m_fd != -1) close(m_fd);
+#endif
+    }
+
+    TagLib::FileName name() const override {
+        return m_name.c_str();
+    }
+
+protected:
+    bool fetch_range(int64_t offset, size_t length, std::vector<uint8_t>& out) override {
+        out.resize(length);
+        size_t done = 0;
+        while (done < length) {
+            uint8_t* dest = out.data() + done;
+            const size_t remaining = length - done;
+            const int64_t position = offset + static_cast<int64_t>(done);
+#ifdef _WIN32
+            OVERLAPPED overlapped = {};
+            overlapped.Offset = static_cast<DWORD>(position);
+            overlapped.OffsetHigh = static_cast<DWORD>(position >> 32);
+            const DWORD toRead = static_cast<DWORD>(remaining);
+            DWORD count = 0;
+            const BOOL didRead = ReadFile(m_handle, dest, toRead, &count, &overlapped);
+            if (!didRead || count == 0) break;
+#else
+            const ssize_t count = pread(m_fd, dest, remaining, static_cast<off_t>(position));
+            if (count < 0 && errno == EINTR) continue;
+            if (count <= 0) break;
+#endif
+            done += static_cast<size_t>(count);
+        }
+        out.resize(done);
+        return done > 0;
+    }
+
+private:
+#ifdef _WIN32
+    std::wstring m_name;
+    HANDLE m_handle = INVALID_HANDLE_VALUE;
+#else
+    std::string m_name;
+    int m_fd = -1;
+
+    void adopt(int fd) {
+        m_fd = fd;
+        struct stat st;
+        if (fd != -1 && fstat(fd, &st) == 0) {
+            m_length = st.st_size;
+            m_isOpen = true;
+        }
+    }
+#endif
 };
 
 static TagLibBridgeFile* http_open_file(const char* url, std::map<std::string, std::string> headers, int read_style, int timeout_ms) {
@@ -2723,6 +2834,16 @@ static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, b
     return item;
 }
 
+static std::unique_ptr<LocalFileIOStream> open_local_stream(const char* path) {
+#ifdef __ANDROID__
+    if (std::strncmp(path, "content://", 10) == 0) {
+        const int fd = open_content_uri_fd(path, "r");
+        return std::make_unique<LocalFileIOStream>(fd, path);
+    }
+#endif
+    return std::make_unique<LocalFileIOStream>(path);
+}
+
 // Read-only, unlike taglib_bridge_open: no write handle that blocks concurrent
 // opens of the same file on Windows or makes Android rescan it once closed.
 static TagLibBridgeFile* batch_open_read_only(const TagLibBatch* batch, const char* path) {
@@ -2731,25 +2852,12 @@ static TagLibBridgeFile* batch_open_read_only(const TagLibBatch* batch, const ch
         return http_open_file(path, batch->httpHeaders, readStyle, batch->httpTimeoutMs);
     }
 
-#ifdef __ANDROID__
-    if (std::strncmp(path, "content://", 10) == 0) {
-        const int fd = open_content_uri_fd(path, "r");
-        return fd == -1 ? nullptr : taglib_bridge_open_fd_with_style(fd, readStyle);
-    }
-#endif
-
     try {
         bool readAudioProps = true;
         TagLib::AudioProperties::ReadStyle style = TagLib::AudioProperties::Average;
         resolve_read_style(readStyle, readAudioProps, style);
 
-#ifdef _WIN32
-        TagLib::String pathStr(path, TagLib::String::UTF8);
-        TagLib::FileName filename(pathStr.toWString().c_str());
-#else
-        TagLib::FileName filename = path;
-#endif
-        auto stream = std::make_unique<TagLib::FileStream>(filename, true);
+        auto stream = open_local_stream(path);
         if (!stream->isOpen()) return nullptr;
         auto fileRef = std::make_unique<TagLib::FileRef>(stream.get(), readAudioProps, style);
         if (fileRef->isNull()) return nullptr;
