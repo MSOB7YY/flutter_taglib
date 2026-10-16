@@ -1,3 +1,6 @@
+## 1.8.4
+* fix(linux): libcurl is loaded at runtime instead of linked, the library loads without it and rpm packages no longer require debian's `CURL_OPENSSL_4` symbol version (uninstallable on fedora)
+
 ## 1.8.3
 * perf: local files are read through a block cached stream with positional reads instead of stdio, android sdcards read ~20x less per file (bionic sized the stdio buffer from the 128 KB `st_blksize` and refilled it after every seek)
 

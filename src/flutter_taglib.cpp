@@ -73,6 +73,7 @@
 #include <sys/resource.h>
 #ifndef __ANDROID__
 #include <curl/curl.h>
+#include <dlfcn.h>
 #endif
 #endif
 
@@ -756,6 +757,57 @@ static std::map<std::string, std::string> parse_headers_json(const char* json_st
     return headers;
 }
 
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__ANDROID__)
+// libcurl is loaded at runtime: the library has to load without it, and linking
+// pins the build distro's curl symbol versions (CURL_OPENSSL_4), which then end
+// up as package requirements other distros can't satisfy.
+struct CurlApi {
+    decltype(&curl_global_init) global_init;
+    decltype(&curl_easy_init) easy_init;
+    decltype(&curl_easy_reset) easy_reset;
+    decltype(&curl_easy_setopt) easy_setopt;
+    decltype(&curl_easy_perform) easy_perform;
+    decltype(&curl_easy_getinfo) easy_getinfo;
+    decltype(&curl_easy_strerror) easy_strerror;
+    decltype(&curl_easy_cleanup) easy_cleanup;
+    decltype(&curl_slist_append) slist_append;
+    decltype(&curl_slist_free_all) slist_free_all;
+};
+
+template <typename Fn>
+static bool curl_load_symbol(void* lib, const char* name, Fn& out) {
+    out = reinterpret_cast<Fn>(dlsym(lib, name));
+    return out != nullptr;
+}
+
+static const CurlApi* curl_api() {
+    static const CurlApi* const loaded = []() -> const CurlApi* {
+        void* lib = dlopen("libcurl.so.4", RTLD_NOW | RTLD_LOCAL);
+        if (!lib) lib = dlopen("libcurl-gnutls.so.4", RTLD_NOW | RTLD_LOCAL);
+        if (!lib) return nullptr;
+        static CurlApi api;
+        const bool ok = curl_load_symbol(lib, "curl_global_init", api.global_init) &&
+                        curl_load_symbol(lib, "curl_easy_init", api.easy_init) &&
+                        curl_load_symbol(lib, "curl_easy_reset", api.easy_reset) &&
+                        curl_load_symbol(lib, "curl_easy_setopt", api.easy_setopt) &&
+                        curl_load_symbol(lib, "curl_easy_perform", api.easy_perform) &&
+                        curl_load_symbol(lib, "curl_easy_getinfo", api.easy_getinfo) &&
+                        curl_load_symbol(lib, "curl_easy_strerror", api.easy_strerror) &&
+                        curl_load_symbol(lib, "curl_easy_cleanup", api.easy_cleanup) &&
+                        curl_load_symbol(lib, "curl_slist_append", api.slist_append) &&
+                        curl_load_symbol(lib, "curl_slist_free_all", api.slist_free_all);
+        if (!ok) {
+            dlclose(lib);
+            return nullptr;
+        }
+        // curl_easy_init would otherwise run the global init lazily, which is not thread safe.
+        api.global_init(CURL_GLOBAL_DEFAULT);
+        return &api;
+    }();
+    return loaded;
+}
+#endif
+
 // Keeps one stream's connection alive between its range requests, so each
 // block doesn't pay a new TCP (and TLS) handshake. Android's HttpURLConnection
 // and Apple's shared NSURLSession already pool connections on their own.
@@ -772,7 +824,7 @@ struct HttpRangeConnection {
     CURL* curl = nullptr;
 
     ~HttpRangeConnection() {
-        if (curl) curl_easy_cleanup(curl);
+        if (curl) curl_api()->easy_cleanup(curl);
     }
 #endif
 };
@@ -1280,57 +1332,59 @@ static bool curl_fetch_http_range(
     std::vector<uint8_t>& out_data,
     std::string& out_error
 ) {
+    const CurlApi* api = curl_api();
+    if (!api) {
+        out_error = "libcurl not found";
+        return false;
+    }
     if (!connection.curl) {
-        // curl_easy_init would otherwise run the global init lazily, which is not thread safe.
-        static std::once_flag curlGlobalInitOnce;
-        std::call_once(curlGlobalInitOnce, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
-        connection.curl = curl_easy_init();
+        connection.curl = api->easy_init();
         if (!connection.curl) {
             out_error = "curl_easy_init failed";
             return false;
         }
     }
     CURL* curl = connection.curl;
-    curl_easy_reset(curl); // keeps the open connection
+    api->easy_reset(curl); // keeps the open connection
 
     struct curl_slist* chunk = nullptr;
     for (const auto& kv : headers) {
         std::string h = kv.first + ": " + kv.second;
-        chunk = curl_slist_append(chunk, h.c_str());
+        chunk = api->slist_append(chunk, h.c_str());
     }
 
     CurlWriteContext writeCtx = { &out_data, length, false };
 
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, (long)(timeout_ms > 0 ? timeout_ms : 15000));
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, (long)(timeout_ms > 0 ? timeout_ms : 15000));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, taglib_curl_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeCtx);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, taglib_curl_header_callback);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &out_total_length);
+    api->easy_setopt(curl, CURLOPT_URL, url.c_str());
+    api->easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    api->easy_setopt(curl, CURLOPT_TIMEOUT_MS, (long)(timeout_ms > 0 ? timeout_ms : 15000));
+    api->easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, (long)(timeout_ms > 0 ? timeout_ms : 15000));
+    api->easy_setopt(curl, CURLOPT_WRITEFUNCTION, taglib_curl_write_callback);
+    api->easy_setopt(curl, CURLOPT_WRITEDATA, &writeCtx);
+    api->easy_setopt(curl, CURLOPT_HEADERFUNCTION, taglib_curl_header_callback);
+    api->easy_setopt(curl, CURLOPT_HEADERDATA, &out_total_length);
 
     if (chunk) {
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+        api->easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
     }
 
     if (offset >= 0 && length > 0) {
         char rangeBuf[64];
         snprintf(rangeBuf, sizeof(rangeBuf), "%lld-%lld", (long long)offset, (long long)(offset + length - 1));
-        curl_easy_setopt(curl, CURLOPT_RANGE, rangeBuf);
+        api->easy_setopt(curl, CURLOPT_RANGE, rangeBuf);
     }
 
-    CURLcode res = curl_easy_perform(curl);
+    CURLcode res = api->easy_perform(curl);
     long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    api->easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     writeCtx.is200 = (http_code == 200);
 
     if (chunk) {
-        curl_slist_free_all(chunk);
+        api->slist_free_all(chunk);
     }
 
     if (res != CURLE_OK) {
-        out_error = curl_easy_strerror(res);
+        out_error = api->easy_strerror(res);
         return false;
     }
     if (http_code != 200 && http_code != 206) {

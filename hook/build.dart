@@ -7,7 +7,7 @@ import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_c/native_toolchain_c.dart';
 
-const String _prebuiltReleaseTag = 'v1.8.3';
+const String _prebuiltReleaseTag = 'v1.8.4';
 const String _githubDownloadBaseUrl =
     'https://github.com/MSOB7YY/flutter_taglib/releases/download/$_prebuiltReleaseTag';
 
@@ -340,7 +340,7 @@ void main(List<String> args) async {
             input.config.code.targetOS.toString().contains('linux'))
           'm',
         if (input.config.code.targetOS.toString().contains('android')) 'log',
-        if (input.config.code.targetOS.toString().contains('linux')) 'curl',
+        if (input.config.code.targetOS.toString().contains('linux')) 'dl',
       ],
       libraryDirectories: [if (targetOSStr == 'windows') '.'],
     );
