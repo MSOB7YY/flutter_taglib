@@ -42,5 +42,6 @@ benchmark_music_library/*
 benchmark_library/*
 .flutter_taglib_build_android_from_source
 .flutter_taglib_build_desktop_from_source
+DISABLED.flutter_taglib_build_*
 
 android/.gradle

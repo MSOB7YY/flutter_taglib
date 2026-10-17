@@ -226,72 +226,54 @@ void main(List<String> args) async {
     final List<String> taglibLibraries = [];
 
     if (targetOSStr == 'windows') {
-      final dirToCppFiles = <String, List<String>>{};
+      final cppFiles = <String>[];
       if (taglibSubDir.existsSync()) {
-        for (final entity in taglibSubDir.listSync(recursive: true)) {
-          if (entity is File && entity.path.endsWith('.cpp')) {
-            final parentDir = entity.parent.path;
-            dirToCppFiles.putIfAbsent(parentDir, () => []).add(entity.path);
-          }
-        }
+        final taglibFiles = taglibSubDir
+            .listSync(recursive: true)
+            .whereType<File>();
+        cppFiles.addAll(
+          taglibFiles.map((e) => e.path).where((e) => e.endsWith('.cpp')),
+        );
       }
+      cppFiles.sort();
 
-      // Compile each directory's C++ files into small static libraries so the
-      // generated cl.exe command line stays below Windows limits.
-      for (final entry in dirToCppFiles.entries) {
-        final dirPath = entry.key;
-        final cppFiles = [...entry.value]..sort();
+      final batches = _batchSourcesForCl(cppFiles);
+      for (var index = 0; index < batches.length; index++) {
+        final libName = 'taglib_$index';
+        taglibLibraries.add(libName);
 
-        final normalizedPath = dirPath.replaceAll('\\', '/');
-        final pathParts = normalizedPath.split('/');
-        final taglibIndex = pathParts.indexOf('taglib');
-        String suffix;
-        if (taglibIndex != -1 && taglibIndex < pathParts.length - 1) {
-          suffix = pathParts.sublist(taglibIndex + 1).join('_');
-        } else {
-          suffix = pathParts.last;
-        }
-        if (suffix.isEmpty) {
-          suffix = 'root';
-        }
-
-        final batches = _chunkFiles(cppFiles, 4);
-        for (var index = 0; index < batches.length; index++) {
-          final libName = 'taglib_${suffix}_$index';
-          taglibLibraries.add(libName);
-
-          // Clean up any existing .obj files in the output directory
-          // to prevent them from being packaged into the static library.
-          final outDirFile = Directory(input.outputDirectory.toFilePath());
-          if (outDirFile.existsSync()) {
-            for (final file in outDirFile.listSync()) {
-              if (file is File && file.path.endsWith('.obj')) {
-                try {
-                  file.deleteSync();
-                } catch (_) {}
-              }
+        // Clean up any existing .obj files in the output directory
+        // to prevent them from being packaged into the static library.
+        final outDirFile = Directory(input.outputDirectory.toFilePath());
+        if (outDirFile.existsSync()) {
+          for (final file in outDirFile.listSync()) {
+            if (file is File && file.path.endsWith('.obj')) {
+              try {
+                file.deleteSync();
+              } catch (_) {}
             }
           }
-
-          final staticBuilder = CBuilder.library(
-            name: libName,
-            assetName: null, // Do not expose as native asset to Flutter
-            sources: batches[index],
-            includes: includes,
-            defines: {'HAVE_CONFIG_H': '1', 'TAGLIB_STATIC': '1'},
-            std: 'c++17',
-            language: Language.cpp,
-            linkModePreference: LinkModePreference.static,
-          );
-
-          await staticBuilder.run(
-            input: input,
-            output: output,
-            logger: Logger('')
-              ..level = Level.ALL
-              ..onRecord.listen((record) => print(record.message)),
-          );
         }
+
+        final staticBuilder = CBuilder.library(
+          name: libName,
+          assetName: null, // Do not expose as native asset to Flutter
+          sources: batches[index],
+          includes: includes,
+          defines: {'HAVE_CONFIG_H': '1', 'TAGLIB_STATIC': '1'},
+          std: 'c++17',
+          language: Language.cpp,
+          linkModePreference: LinkModePreference.static,
+          flags: const ['/MP'],
+        );
+
+        await staticBuilder.run(
+          input: input,
+          output: output,
+          logger: Logger('')
+            ..level = Level.ALL
+            ..onRecord.listen((record) => print(record.message)),
+        );
       }
     } else {
       // For other platforms, compile all .cpp files directly
@@ -677,15 +659,32 @@ Future<void> _moveDirectory(Directory source, Directory destination) async {
   }
 }
 
-List<List<String>> _chunkFiles(List<String> files, int chunkSize) {
-  final chunks = <List<String>>[];
-  for (var start = 0; start < files.length; start += chunkSize) {
-    final end = start + chunkSize > files.length
-        ? files.length
-        : start + chunkSize;
-    chunks.add(files.sublist(start, end));
+/// Batches for single cl.exe calls: cl.exe runs through cmd.exe (8191 chars
+/// max), and objects land in one flat directory, so no repeated basenames.
+List<List<String>> _batchSourcesForCl(List<String> files) {
+  const maxPathsLength = 6000;
+  final batches = <List<String>>[];
+  var batch = <String>[];
+  var batchNames = <String>{};
+  var batchLength = 0;
+  for (final path in files) {
+    final file = File(path).absolute;
+    final pathLength = file.path.length + 1;
+    final name = file.uri.pathSegments.last;
+    final isFull = batchLength + pathLength > maxPathsLength;
+    final hasName = batchNames.contains(name);
+    if (batch.isNotEmpty && (isFull || hasName)) {
+      batches.add(batch);
+      batch = <String>[];
+      batchNames = <String>{};
+      batchLength = 0;
+    }
+    batch.add(path);
+    batchNames.add(name);
+    batchLength += pathLength;
   }
-  return chunks;
+  if (batch.isNotEmpty) batches.add(batch);
+  return batches;
 }
 
 bool _isPlatformEnabled(String targetOS) {
