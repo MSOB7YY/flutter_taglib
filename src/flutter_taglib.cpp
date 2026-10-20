@@ -293,6 +293,9 @@ struct TagLibBridgeFile {
     TagLib::IOStream* stream;
     TagLib::FileRef* fileRef;
 
+    std::unique_ptr<TagLib::IOStream> contentStream;
+    std::unique_ptr<TagLib::FileRef> audioRef;
+
     // String cache for FFI lifetime safety
     std::string cachedTitle;
     std::string cachedArtist;
@@ -535,6 +538,186 @@ static TagLib::VariantMap build_picture_map(
     return picMap;
 }
 
+// by claude
+// hides the base name so TagLib picks the format from the content
+class ContentIOStream : public TagLib::IOStream {
+public:
+    ContentIOStream(TagLib::IOStream* base, TagLib::offset_t start) : m_base(base), m_start(start) {}
+
+    TagLib::FileName name() const override {
+        return "";
+    }
+
+    TagLib::ByteVector readBlock(size_t length) override {
+        m_base->seek(m_start + m_pos);
+        TagLib::ByteVector data = m_base->readBlock(length);
+        m_pos += data.size();
+        return data;
+    }
+
+    void writeBlock(const TagLib::ByteVector& data) override {
+        m_base->seek(m_start + m_pos);
+        m_base->writeBlock(data);
+        m_pos += data.size();
+    }
+
+    void insert(const TagLib::ByteVector& data, TagLib::offset_t start = 0, size_t replace = 0) override {
+        m_base->insert(data, m_start + start, replace);
+    }
+
+    void removeBlock(TagLib::offset_t start = 0, size_t length = 0) override {
+        m_base->removeBlock(m_start + start, length);
+    }
+
+    bool readOnly() const override {
+        return m_base->readOnly();
+    }
+
+    bool isOpen() const override {
+        return m_base->isOpen();
+    }
+
+    void seek(TagLib::offset_t offset, TagLib::IOStream::Position p = TagLib::IOStream::Beginning) override {
+        switch (p) {
+            case TagLib::IOStream::Beginning:
+                m_pos = offset;
+                break;
+            case TagLib::IOStream::Current:
+                m_pos += offset;
+                break;
+            case TagLib::IOStream::End:
+                m_pos = length() + offset;
+                break;
+        }
+        if (m_pos < 0) m_pos = 0;
+    }
+
+    void clear() override {
+        m_base->clear();
+    }
+
+    TagLib::offset_t tell() const override {
+        return m_pos;
+    }
+
+    TagLib::offset_t length() override {
+        return m_base->length() - m_start;
+    }
+
+    void truncate(TagLib::offset_t length) override {
+        m_base->truncate(m_start + length);
+    }
+
+private:
+    TagLib::IOStream* m_base;
+    TagLib::offset_t m_start;
+    TagLib::offset_t m_pos = 0;
+};
+
+static TagLib::offset_t leading_id3v2_size(TagLib::IOStream* stream) {
+    static constexpr unsigned int kId3HeaderSize = 10;
+    TagLib::offset_t size = 0;
+    while (true) {
+        stream->seek(size);
+        const TagLib::ByteVector header = stream->readBlock(kId3HeaderSize);
+        if (header.size() < kId3HeaderSize || !header.startsWith("ID3")) return size;
+
+        const auto synchsafeByte = [&header](unsigned int i) {
+            return static_cast<TagLib::offset_t>(static_cast<unsigned char>(header[i]) & 0x7f);
+        };
+        const TagLib::offset_t tagSize = synchsafeByte(6) << 21 | synchsafeByte(7) << 14 | synchsafeByte(8) << 7 | synchsafeByte(9);
+        const bool hasFooter = (static_cast<unsigned char>(header[5]) & 0x10) != 0;
+        const TagLib::offset_t footerSize = hasFooter ? kId3HeaderSize : 0;
+        size += kId3HeaderSize + tagSize + footerSize;
+    }
+}
+
+using FormatCheck = bool (*)(TagLib::IOStream*);
+
+static FormatCheck format_check_of(const TagLib::File* file) {
+    static const std::unordered_map<std::type_index, FormatCheck> checks = {
+        {std::type_index(typeid(TagLib::MPEG::File)), TagLib::MPEG::File::isSupported},
+        {std::type_index(typeid(TagLib::Ogg::Vorbis::File)), TagLib::Ogg::Vorbis::File::isSupported},
+        {std::type_index(typeid(TagLib::Ogg::FLAC::File)), TagLib::Ogg::FLAC::File::isSupported},
+        {std::type_index(typeid(TagLib::Ogg::Speex::File)), TagLib::Ogg::Speex::File::isSupported},
+        {std::type_index(typeid(TagLib::Ogg::Opus::File)), TagLib::Ogg::Opus::File::isSupported},
+        {std::type_index(typeid(TagLib::FLAC::File)), TagLib::FLAC::File::isSupported},
+        {std::type_index(typeid(TagLib::MPC::File)), TagLib::MPC::File::isSupported},
+        {std::type_index(typeid(TagLib::WavPack::File)), TagLib::WavPack::File::isSupported},
+        {std::type_index(typeid(TagLib::APE::File)), TagLib::APE::File::isSupported},
+        {std::type_index(typeid(TagLib::TrueAudio::File)), TagLib::TrueAudio::File::isSupported},
+        {std::type_index(typeid(TagLib::MP4::File)), TagLib::MP4::File::isSupported},
+        {std::type_index(typeid(TagLib::ASF::File)), TagLib::ASF::File::isSupported},
+        {std::type_index(typeid(TagLib::RIFF::AIFF::File)), TagLib::RIFF::AIFF::File::isSupported},
+        {std::type_index(typeid(TagLib::RIFF::WAV::File)), TagLib::RIFF::WAV::File::isSupported},
+        {std::type_index(typeid(TagLib::DSF::File)), TagLib::DSF::File::isSupported},
+        {std::type_index(typeid(TagLib::DSDIFF::File)), TagLib::DSDIFF::File::isSupported},
+        {std::type_index(typeid(TagLib::Matroska::File)), TagLib::Matroska::File::isSupported},
+    };
+    const auto match = checks.find(std::type_index(typeid(*file)));
+    return match == checks.end() ? nullptr : match->second;
+}
+
+// TagLib picks the reader by extension and some readers take any content. Runs after the parse, the bytes it reads
+// are already cached.
+static bool content_matches_reader(const TagLib::File* file, TagLib::IOStream* stream) {
+    const FormatCheck formatCheck = format_check_of(file);
+    if (!formatCheck) return true;
+    ContentIOStream behindTags(stream, leading_id3v2_size(stream));
+    return formatCheck(&behindTags);
+}
+
+static bool has_duration(TagLib::FileRef* fileRef, bool readAudioProps) {
+    if (!readAudioProps) return true;
+    const TagLib::AudioProperties* props = fileRef->audioProperties();
+    return props && props->lengthInMilliseconds() > 0;
+}
+
+// With ID3 tags in front, those stay the tags (the ones players show) and the audio properties come from the content.
+static bool open_content_at(TagLibBridgeFile& bridge, TagLib::offset_t start, bool readAudioProps, TagLib::AudioProperties::ReadStyle style) {
+    auto contentStream = std::make_unique<ContentIOStream>(bridge.stream, start);
+    auto content = std::make_unique<TagLib::FileRef>(contentStream.get(), readAudioProps, style);
+    if (content->isNull() || !has_duration(content.get(), readAudioProps)) return false;
+
+    bridge.contentStream = std::move(contentStream);
+    if (start == 0) {
+        bridge.fileRef = content.release();
+        return true;
+    }
+    bridge.audioRef = std::move(content);
+    bridge.fileRef = new TagLib::FileRef(new TagLib::MPEG::File(bridge.stream, false));
+    return !bridge.fileRef->isNull();
+}
+
+// MPEG, FLAC, APE, MPC and TTA read ID3 tags in front themselves, the other formats are read behind them.
+static bool open_by_content(TagLibBridgeFile& bridge, TagLib::offset_t contentStart, bool readAudioProps, TagLib::AudioProperties::ReadStyle style) {
+    if (open_content_at(bridge, 0, readAudioProps, style)) return true;
+    return contentStart > 0 && open_content_at(bridge, contentStart, readAudioProps, style);
+}
+
+// TagLib trusts the extension, and some of its readers take any content (MPEG, WAV, WavPack, APE, MPC...), giving a
+// zero or made up duration. Most also fail on ID3v2 tags in front, which taggers that only know MP3 write to anything
+// named .mp3. Both are read by their content instead, files TagLib reads fine stay as they were.
+static bool open_file_ref(TagLibBridgeFile& bridge, bool readAudioProps, TagLib::AudioProperties::ReadStyle style) {
+    TagLib::IOStream* stream = bridge.stream;
+    auto fileRef = std::make_unique<TagLib::FileRef>(stream, readAudioProps, style);
+    const bool isOpen = !fileRef->isNull();
+    if (isOpen && has_duration(fileRef.get(), readAudioProps) && content_matches_reader(fileRef->file(), stream)) {
+        bridge.fileRef = fileRef.release();
+        return true;
+    }
+
+    const TagLib::offset_t contentStart = leading_id3v2_size(stream);
+    if (open_by_content(bridge, contentStart, readAudioProps, style)) return true;
+    if (!isOpen) return false;
+    bridge.fileRef = fileRef.release();
+    return true;
+}
+
+static TagLib::File* audio_file(TagLibBridgeFile* file) {
+    return file->audioRef ? file->audioRef->file() : file->fileRef->file();
+}
+
 extern "C" {
 
 #ifdef __ANDROID__
@@ -612,19 +795,14 @@ TagLibBridgeFile* taglib_bridge_open_with_style(const char* filepath, int read_s
 #else
         TagLib::FileName filename = filepath;
 #endif
-        auto fileRef = new TagLib::FileRef(filename, readAudioProps, style);
-        if (fileRef->isNull()) {
-            delete fileRef;
-#ifdef __ANDROID__
-            // POSIX open failed for Android filepath.
-#endif
+        auto bridge = new TagLibBridgeFile();
+        bridge->stream = new TagLib::FileStream(filename);
+        bridge->fileRef = nullptr;
+        if (!bridge->stream->isOpen() || !open_file_ref(*bridge, readAudioProps, style)) {
+            taglib_bridge_close(bridge);
             LOGE("taglib_bridge_open: fileRef is null (invalid file or format) for: %s", filepath);
             return nullptr;
         }
-
-        auto bridge = new TagLibBridgeFile();
-        bridge->stream = nullptr;
-        bridge->fileRef = fileRef;
         LOGI("taglib_bridge_open: successfully opened file: %s", filepath);
         return bridge;
     } catch (const std::exception& e) {
@@ -665,17 +843,14 @@ TagLibBridgeFile* taglib_bridge_open_fd_with_style(int fd, int read_style) {
         TagLib::AudioProperties::ReadStyle style = TagLib::AudioProperties::Average;
         resolve_read_style(read_style, readAudioProps, style);
 
-        auto fileRef = new TagLib::FileRef(stream, readAudioProps, style);
-        if (fileRef->isNull()) {
-            LOGE("taglib_bridge_open_fd: fileRef is null (invalid file or format) for fd: %d", fd);
-            delete fileRef;
-            delete stream;
-            return nullptr;
-        }
-
         auto bridge = new TagLibBridgeFile();
         bridge->stream = stream;
-        bridge->fileRef = fileRef;
+        bridge->fileRef = nullptr;
+        if (!open_file_ref(*bridge, readAudioProps, style)) {
+            LOGE("taglib_bridge_open_fd: fileRef is null (invalid file or format) for fd: %d", fd);
+            taglib_bridge_close(bridge);
+            return nullptr;
+        }
         return bridge;
     } catch (const std::exception& e) {
         LOGE("taglib_bridge_open_fd: std::exception caught: %s", e.what());
@@ -1734,15 +1909,14 @@ static TagLibBridgeFile* http_open_file(const char* url, std::map<std::string, s
         TagLib::AudioProperties::ReadStyle style = TagLib::AudioProperties::Average;
         resolve_read_style(read_style, readAudioProps, style);
 
-        auto fileRef = std::make_unique<TagLib::FileRef>(stream.get(), readAudioProps, style);
-        if (fileRef->isNull()) {
+        auto bridge = new TagLibBridgeFile();
+        bridge->stream = stream.release();
+        bridge->fileRef = nullptr;
+        if (!open_file_ref(*bridge, readAudioProps, style)) {
             LOGE("taglib_bridge_open_http: fileRef is null (invalid format or unreadable stream) for: %s", url);
+            taglib_bridge_close(bridge);
             return nullptr;
         }
-
-        auto bridge = new TagLibBridgeFile();
-        bridge->fileRef = fileRef.release();
-        bridge->stream = stream.release();
         return bridge;
     } catch (const std::exception& e) {
         LOGE("taglib_bridge_open_http: std::exception caught for %s: %s", url, e.what());
@@ -1809,6 +1983,8 @@ void taglib_bridge_close(TagLibBridgeFile* file) {
         if (file->fileRef) {
             delete file->fileRef;
         }
+        file->audioRef.reset();
+        file->contentStream.reset();
         if (file->stream) {
             // Delete stream after fileRef, as required by TagLib API
             delete file->stream;
@@ -1936,36 +2112,36 @@ void taglib_bridge_set_track(TagLibBridgeFile* file, uint32_t track) {
 }
 
 int taglib_bridge_get_duration(TagLibBridgeFile* file) {
-    if (!file || !file->fileRef || file->fileRef->isNull() || !file->fileRef->audioProperties()) return 0;
+    if (!file || !file->fileRef || file->fileRef->isNull() || !audio_file(file)->audioProperties()) return 0;
     try {
-        return file->fileRef->audioProperties()->lengthInMilliseconds();
+        return audio_file(file)->audioProperties()->lengthInMilliseconds();
     } catch (...) {
         return 0;
     }
 }
 
 int taglib_bridge_get_bitrate(TagLibBridgeFile* file) {
-    if (!file || !file->fileRef || file->fileRef->isNull() || !file->fileRef->audioProperties()) return 0;
+    if (!file || !file->fileRef || file->fileRef->isNull() || !audio_file(file)->audioProperties()) return 0;
     try {
-        return file->fileRef->audioProperties()->bitrate();
+        return audio_file(file)->audioProperties()->bitrate();
     } catch (...) {
         return 0;
     }
 }
 
 int taglib_bridge_get_samplerate(TagLibBridgeFile* file) {
-    if (!file || !file->fileRef || file->fileRef->isNull() || !file->fileRef->audioProperties()) return 0;
+    if (!file || !file->fileRef || file->fileRef->isNull() || !audio_file(file)->audioProperties()) return 0;
     try {
-        return file->fileRef->audioProperties()->sampleRate();
+        return audio_file(file)->audioProperties()->sampleRate();
     } catch (...) {
         return 0;
     }
 }
 
 int taglib_bridge_get_channels(TagLibBridgeFile* file) {
-    if (!file || !file->fileRef || file->fileRef->isNull() || !file->fileRef->audioProperties()) return 0;
+    if (!file || !file->fileRef || file->fileRef->isNull() || !audio_file(file)->audioProperties()) return 0;
     try {
-        return file->fileRef->audioProperties()->channels();
+        return audio_file(file)->audioProperties()->channels();
     } catch (...) {
         return 0;
     }
@@ -1974,7 +2150,7 @@ int taglib_bridge_get_channels(TagLibBridgeFile* file) {
 int taglib_bridge_get_bits_per_sample(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
     try {
-        auto props = file->fileRef->audioProperties();
+        auto props = audio_file(file)->audioProperties();
         if (!props) return 0;
 
         // TagLib's AudioProperties base class does not expose bit depth, so it
@@ -2005,11 +2181,11 @@ int taglib_bridge_get_bits_per_sample(TagLibBridgeFile* file) {
 }
 
 const char* taglib_bridge_get_bitrate_mode(TagLibBridgeFile* file) {
-    if (!file || !file->fileRef || file->fileRef->isNull() || !file->fileRef->audioProperties()) return "";
+    if (!file || !file->fileRef || file->fileRef->isNull() || !audio_file(file)->audioProperties()) return "";
     try {
-        auto audioProps = file->fileRef->audioProperties();
-        auto filePtr = file->fileRef->file();
-        
+        auto filePtr = audio_file(file);
+        auto audioProps = filePtr->audioProperties();
+
         if (auto mpegFile = dynamic_cast<TagLib::MPEG::File*>(filePtr)) {
             auto mpegProps = dynamic_cast<TagLib::MPEG::Properties*>(audioProps);
             if (mpegProps) {
@@ -2052,7 +2228,7 @@ const char* taglib_bridge_get_format(TagLibBridgeFile* file) {
     }
 
     try {
-        auto filePtr = file->fileRef->file();
+        auto filePtr = audio_file(file);
         if (!filePtr) return nullptr;
 
         // The concrete TagLib::File subclass is resolved from the file contents,
@@ -2061,7 +2237,7 @@ const char* taglib_bridge_get_format(TagLibBridgeFile* file) {
 
         if (fileType == std::type_index(typeid(TagLib::MPEG::File))) {
             // MPEG covers layers I/II/III, so report the actual layer.
-            auto mpegProps = dynamic_cast<TagLib::MPEG::Properties*>(file->fileRef->audioProperties());
+            auto mpegProps = dynamic_cast<TagLib::MPEG::Properties*>(filePtr->audioProperties());
             switch (mpegProps ? mpegProps->layer() : 3) {
                 case 1: file->cachedFormat = "MP1"; break;
                 case 2: file->cachedFormat = "MP2"; break;
@@ -2069,7 +2245,7 @@ const char* taglib_bridge_get_format(TagLibBridgeFile* file) {
             }
         } else if (fileType == std::type_index(typeid(TagLib::MP4::File))) {
             // Distinguish lossy AAC from lossless ALAC inside the MP4 container.
-            auto mp4Props = dynamic_cast<TagLib::MP4::Properties*>(file->fileRef->audioProperties());
+            auto mp4Props = dynamic_cast<TagLib::MP4::Properties*>(filePtr->audioProperties());
             if (mp4Props && mp4Props->codec() == TagLib::MP4::Properties::AAC) {
                 file->cachedFormat = "AAC";
             } else if (mp4Props && mp4Props->codec() == TagLib::MP4::Properties::ALAC) {
@@ -2081,7 +2257,7 @@ const char* taglib_bridge_get_format(TagLibBridgeFile* file) {
             // Matroska is a container, so report the audio codec inside it and
             // only fall back to the container name (split by EBML doc type)
             // when the codec is not recognized.
-            auto mkProps = dynamic_cast<TagLib::Matroska::Properties*>(file->fileRef->audioProperties());
+            auto mkProps = dynamic_cast<TagLib::Matroska::Properties*>(filePtr->audioProperties());
             std::string token = mkProps ? matroska_codec_token(mkProps->codecName()) : std::string();
             if (!token.empty()) {
                 file->cachedFormat = token;
@@ -2115,7 +2291,7 @@ int taglib_bridge_is_lossless(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull()) return kLosslessUnknown;
     if (file->losslessResolved) return file->cachedLossless;
     try {
-        auto filePtr = file->fileRef->file();
+        auto filePtr = audio_file(file);
         if (!filePtr) {
             file->cachedLossless = kLosslessUnknown;
             file->losslessResolved = true;
@@ -2123,7 +2299,7 @@ int taglib_bridge_is_lossless(TagLibBridgeFile* file) {
         }
 
         const std::type_index fileType(typeid(*filePtr));
-        auto audioProps = file->fileRef->audioProperties();
+        auto audioProps = filePtr->audioProperties();
 
         int verdict = kLosslessUnknown;
 
@@ -2747,7 +2923,7 @@ int taglib_bridge_set_chapters(TagLibBridgeFile* file, const uint32_t* starts_ms
     if (count > 0 && (!starts_ms || !titles)) return 0;
     try {
         TagLib::File* f = file->fileRef->file();
-        const auto* audioProperties = f->audioProperties();
+        const auto* audioProperties = audio_file(file)->audioProperties();
         const uint32_t durationMs = audioProperties ? clamp_chapter_ms(audioProperties->lengthInMilliseconds()) : 0;
 
         std::vector<BridgeChapter> chapters;
@@ -2913,12 +3089,14 @@ static TagLibBridgeFile* batch_open_read_only(const TagLibBatch* batch, const ch
 
         auto stream = open_local_stream(path);
         if (!stream->isOpen()) return nullptr;
-        auto fileRef = std::make_unique<TagLib::FileRef>(stream.get(), readAudioProps, style);
-        if (fileRef->isNull()) return nullptr;
 
         auto bridge = new TagLibBridgeFile();
-        bridge->fileRef = fileRef.release();
         bridge->stream = stream.release();
+        bridge->fileRef = nullptr;
+        if (!open_file_ref(*bridge, readAudioProps, style)) {
+            taglib_bridge_close(bridge);
+            return nullptr;
+        }
         return bridge;
     } catch (...) {
         return nullptr;

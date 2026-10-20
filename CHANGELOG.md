@@ -1,3 +1,7 @@
+## 1.8.5
+* fix: files whose extension doesn't match their content (m4a saved as `.mp3`, mp3 saved as `.wav`, webm saved as `.m4a`...) are read by their content instead of failing or reporting a zero or made up duration
+* fix: files with ID3v2 tags in front (left by MP3-only taggers) keep those tags and take the audio properties from the format behind them
+
 ## 1.8.4
 * fix(linux): libcurl is loaded at runtime instead of linked, the library loads without it and rpm packages no longer require debian's `CURL_OPENSSL_4` symbol version (uninstallable on fedora)
 
