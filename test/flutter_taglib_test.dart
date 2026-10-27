@@ -535,7 +535,7 @@ void main() {
           continue;
         }
         expect(res.success, isTrue);
-        expect(res.properties, equals(file.properties));
+        expect(res.properties, equals(_propertiesWithTagFallbacks(file)));
         final info = res.audioInfo!;
         final expectedInfo = file.audioInfo;
         expect(info.format, equals(expectedInfo.format));
@@ -559,6 +559,37 @@ void main() {
       expect(results.single.success, isTrue);
       expect(results.single.coverData, isNull);
       expect(results.single.properties[TagProperties.title], equals(['TempleOS Hymn Risen (Remix)']));
+    });
+
+    test('Native batch read takes the matroska segment title (readBatchNative)', () async {
+      const path = 'test/assets/01 TempleOS Hymn Risen (Remix).webm';
+      final file = TagLibFile.open(path)!;
+      expect(file.properties.containsKey(TagProperties.title), isFalse);
+      file.close();
+
+      final results = await TagLibFile.readBatchNative([path]).toList();
+      expect(results.single.properties[TagProperties.title], equals(['TempleOS Hymn Risen (Remix)']));
+    });
+
+    test('Native batch read takes DESCRIPTION as the xiph comment (readBatchNative)', () async {
+      final xiphFile = File('${tempDir.path}/temp_test.opus');
+      File('test/assets/01 TempleOS Hymn Risen (Remix).opus').copySync(xiphFile.path);
+
+      void setTags(Map<String, List<String>> tags) {
+        final file = TagLibFile.open(xiphFile.path)!;
+        file.setProperties({...file.properties, ...tags});
+        expect(file.save(), isTrue);
+        file.close();
+      }
+
+      setTags({'DESCRIPTION': ['the description']});
+      final described = await TagLibFile.readBatchNative([xiphFile.path]).toList();
+      expect(described.single.properties[TagProperties.comment], equals(['the description']));
+      expect(described.single.properties['DESCRIPTION'], equals(['the description']));
+
+      setTags({TagProperties.comment: ['the comment']});
+      final commented = await TagLibFile.readBatchNative([xiphFile.path]).toList();
+      expect(commented.single.properties[TagProperties.comment], equals(['the comment']));
     });
   });
 
@@ -773,4 +804,15 @@ void main() {
       }
     });
   });
+}
+
+/// what `readBatchNative` adds on top of `properties`, from `Tag::title()` and `Tag::comment()`.
+Map<String, List<String>> _propertiesWithTagFallbacks(TagLibFile file) {
+  final properties = file.properties;
+  final title = file.title;
+  if (!properties.containsKey(TagProperties.title) && title.isNotEmpty) properties[TagProperties.title] = [title];
+  final hasComment = properties.keys.any((key) => key.startsWith(TagProperties.comment));
+  final comment = file.comment;
+  if (!hasComment && comment.isNotEmpty) properties[TagProperties.comment] = [comment];
+  return properties;
 }

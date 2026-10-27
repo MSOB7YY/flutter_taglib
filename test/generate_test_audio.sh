@@ -153,6 +153,10 @@ encode_all() {
     -metadata date="2020" \
     "$OUT_DIR/$BASE_NAME.opus"
 
+  echo "Encoding WEBM..."
+  # ffmpeg keeps the title in the segment info, not in the tags.
+  ffmpeg -y -i "$TEMP_WAV" -c:a libopus -b:a 96k     -metadata title="TempleOS Hymn Risen (Remix)"     -metadata artist="Terry A. Davis"     -metadata album="TempleOS Hymns"     -metadata track="1"     -metadata genre="Electronic"     -metadata date="2020"     "$OUT_DIR/$BASE_NAME.webm"
+
   # 9. APE
   echo "Encoding APE..."
   if command -v mac >/dev/null 2>&1; then

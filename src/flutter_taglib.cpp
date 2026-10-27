@@ -2981,11 +2981,35 @@ static void batch_append_string(std::string& buffer, const TagLib::String& value
     buffer.append(utf8);
 }
 
+static bool has_comment_property(const TagLib::PropertyMap& properties) {
+    for (const auto& entry : properties) {
+        if (entry.first.startsWith("COMMENT")) return true;
+    }
+    return false;
+}
+
+// properties() leaves out what tag() falls back to: the matroska segment title, and DESCRIPTION as the xiph comment.
+static TagLib::PropertyMap read_properties_with_tag_fallbacks(const TagLib::FileRef& fileRef) {
+    TagLib::PropertyMap properties = fileRef.properties();
+    const TagLib::Tag* tag = fileRef.tag();
+    if (!tag) return properties;
+
+    if (!properties.contains("TITLE")) {
+        const TagLib::String title = tag->title();
+        if (!title.isEmpty()) properties.insert("TITLE", TagLib::StringList(title));
+    }
+    if (!has_comment_property(properties)) {
+        const TagLib::String comment = tag->comment();
+        if (!comment.isEmpty()) properties.insert("COMMENT", TagLib::StringList(comment));
+    }
+    return properties;
+}
+
 // Reads everything that can throw before allocating, so a failure leaks nothing.
 static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, bool readCover, bool readChapters) {
     std::string region;
     uint32_t propertiesCount = 0;
-    const TagLib::PropertyMap properties = file->fileRef->properties();
+    const TagLib::PropertyMap properties = read_properties_with_tag_fallbacks(*file->fileRef);
     for (auto it = properties.begin(); it != properties.end(); ++it) {
         batch_append_string(region, it->first);
         batch_append_u32(region, static_cast<uint32_t>(it->second.size()));

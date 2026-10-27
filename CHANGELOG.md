@@ -1,3 +1,6 @@
+## 1.8.7
+* fix: `readBatchNative` reads `TITLE` from the matroska segment title when there is no `TITLE` tag. It also reads `COMMENT` from the xiph `DESCRIPTION` field when there is no `COMMENT` tag. This matches TagLib's own `Tag::title()` and `Tag::comment()` and covers files tagged by ffmpeg
+
 ## 1.8.5
 * fix: files whose extension doesn't match their content (m4a saved as `.mp3`, mp3 saved as `.wav`, webm saved as `.m4a`...) are read by their content instead of failing or reporting a zero or made up duration
 * fix: files with ID3v2 tags in front (left by MP3-only taggers) keep those tags and take the audio properties from the format behind them
