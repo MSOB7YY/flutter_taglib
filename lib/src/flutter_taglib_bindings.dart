@@ -8,6 +8,7 @@ import '../flutter_taglib_bindings_generated.dart' as generated;
 typedef TagLibBridgeFile = generated.TagLibBridgeFile;
 typedef TagLibBridgePictures = generated.TagLibBridgePictures;
 typedef TagLibBridgeProperties = generated.TagLibBridgeProperties;
+typedef TagLibBridgePopularimeters = generated.TagLibBridgePopularimeters;
 typedef TagLibBatch = generated.TagLibBatch;
 typedef TagLibBatchItem = generated.TagLibBatchItem;
 typedef TagLibBatchItemCallbackFunction = generated.TagLibBatchItemCallbackFunction;
@@ -348,6 +349,59 @@ int taglib_bridge_set_chapters(
   int count,
 ) {
   return generated.taglib_bridge_set_chapters(file, startsMs, titles, count);
+}
+
+ffi.Pointer<TagLibBridgePopularimeters> taglib_bridge_popularimeters_create() {
+  return generated.taglib_bridge_popularimeters_create();
+}
+
+void taglib_bridge_popularimeters_free(ffi.Pointer<TagLibBridgePopularimeters> popularimeters) {
+  generated.taglib_bridge_popularimeters_free(popularimeters);
+}
+
+ffi.Pointer<TagLibBridgePopularimeters> taglib_bridge_popularimeters_get(ffi.Pointer<TagLibBridgeFile> file) {
+  return generated.taglib_bridge_popularimeters_get(file);
+}
+
+int taglib_bridge_popularimeters_set(
+  ffi.Pointer<TagLibBridgeFile> file,
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+) {
+  return generated.taglib_bridge_popularimeters_set(file, popularimeters);
+}
+
+int taglib_bridge_popularimeters_size(ffi.Pointer<TagLibBridgePopularimeters> popularimeters) {
+  return generated.taglib_bridge_popularimeters_size(popularimeters);
+}
+
+ffi.Pointer<ffi.Char> taglib_bridge_popularimeters_email(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+  int index,
+) {
+  return generated.taglib_bridge_popularimeters_email(popularimeters, index);
+}
+
+int taglib_bridge_popularimeters_rating(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+  int index,
+) {
+  return generated.taglib_bridge_popularimeters_rating(popularimeters, index);
+}
+
+int taglib_bridge_popularimeters_counter(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+  int index,
+) {
+  return generated.taglib_bridge_popularimeters_counter(popularimeters, index);
+}
+
+void taglib_bridge_popularimeters_add(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+  ffi.Pointer<ffi.Char> email,
+  int rating,
+  int counter,
+) {
+  generated.taglib_bridge_popularimeters_add(popularimeters, email, rating, counter);
 }
 
 ffi.Pointer<ffi.NativeFinalizerFunction> get taglib_bridge_free_address => generated.addresses.taglib_bridge_free;

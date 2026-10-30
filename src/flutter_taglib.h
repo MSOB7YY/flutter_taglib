@@ -124,6 +124,25 @@ FFI_PLUGIN_EXPORT int taglib_bridge_properties_value_count(TagLibBridgePropertie
 FFI_PLUGIN_EXPORT const char* taglib_bridge_properties_value(TagLibBridgeProperties* props, const char* key, int value_index);
 FFI_PLUGIN_EXPORT void taglib_bridge_properties_add(TagLibBridgeProperties* props, const char* key, const char* value);
 
+// ID3v2 POPM (popularimeter) frames: a rating (1-255, 0 when unknown) and a play
+// counter per email. Most players keep their rating there for mp3, wav, aiff,
+// dsf, dff and tta files.
+typedef struct TagLibBridgePopularimeters TagLibBridgePopularimeters;
+
+FFI_PLUGIN_EXPORT TagLibBridgePopularimeters* taglib_bridge_popularimeters_create();
+FFI_PLUGIN_EXPORT void taglib_bridge_popularimeters_free(TagLibBridgePopularimeters* popularimeters);
+// Returns NULL when the format has no ID3v2 tag.
+FFI_PLUGIN_EXPORT TagLibBridgePopularimeters* taglib_bridge_popularimeters_get(TagLibBridgeFile* file);
+// Replaces all POPM frames, an empty list removes them.
+// Returns 1 on success, 0 when the format has no ID3v2 tag.
+FFI_PLUGIN_EXPORT int taglib_bridge_popularimeters_set(TagLibBridgeFile* file, TagLibBridgePopularimeters* popularimeters);
+FFI_PLUGIN_EXPORT int taglib_bridge_popularimeters_size(TagLibBridgePopularimeters* popularimeters);
+FFI_PLUGIN_EXPORT const char* taglib_bridge_popularimeters_email(TagLibBridgePopularimeters* popularimeters, int index);
+FFI_PLUGIN_EXPORT int taglib_bridge_popularimeters_rating(TagLibBridgePopularimeters* popularimeters, int index);
+FFI_PLUGIN_EXPORT uint32_t taglib_bridge_popularimeters_counter(TagLibBridgePopularimeters* popularimeters, int index);
+// rating is clamped to 0-255.
+FFI_PLUGIN_EXPORT void taglib_bridge_popularimeters_add(TagLibBridgePopularimeters* popularimeters, const char* email, int rating, uint32_t counter);
+
 // Replaces the file's chapters, count 0 removes them. Each chapter ends where
 // the next one starts, the last one at the end of the file. Written as ID3v2
 // CHAP frames, MP4 Nero chapters, Matroska chapters or Xiph CHAPTERxxx comments.
@@ -159,6 +178,12 @@ typedef struct TagLibBatchItem {
     uint32_t chapters_count;
     uint32_t chapters_size;
     const uint8_t* chapters;
+    // Packed ID3v2 POPM frames: popularimeters_count entries of
+    // [u32 email length][email][u32 rating][u32 counter]
+    // in native byte order, emails are UTF-8 without terminators.
+    uint32_t popularimeters_count;
+    uint32_t popularimeters_size;
+    const uint8_t* popularimeters;
     const char* format; // NULL when undetermined
     const char* bitrate_mode;
     // Front cover bytes, NULL when absent or not requested. Owned by the
