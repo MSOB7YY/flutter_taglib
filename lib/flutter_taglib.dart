@@ -65,6 +65,36 @@ enum TagLibAudioPropertiesStyle {
   const TagLibAudioPropertiesStyle(this.value);
 }
 
+/// The tag a format keeps its properties in, see [TagLibFile.getTagType].
+enum TagLibTagType {
+  unknown(0),
+
+  /// mp3, wav, aiff, dsf, dff and tta.
+  id3v2(1),
+
+  /// flac, ogg, opus and spx.
+  xiphComment(2),
+  mp4(3),
+
+  /// ape, wv and mpc.
+  ape(4),
+
+  /// wma and wmv.
+  asf(5),
+
+  /// mka, mkv and webm.
+  matroska(6),
+
+  /// tracker modules (mod, s3m, it, xm), they only hold a title and a comment.
+  mod(7),
+  ;
+
+  final int value;
+  const TagLibTagType(this.value);
+
+  static TagLibTagType fromValue(int value) => values.firstWhere((e) => e.value == value, orElse: () => unknown);
+}
+
 /// Lightweight song metadata record returned from batch scanning across worker Isolates.
 class BatchTagMetadata {
   const BatchTagMetadata({
@@ -881,6 +911,8 @@ class TagLibFile {
         audioInfo: null,
         properties: const {},
         chapters: const [],
+        popularimeters: const [],
+        asfSharedUserRating: null,
         coverData: null,
       );
     }
@@ -938,12 +970,35 @@ class TagLibFile {
       );
     }
 
+    List<TagLibPopularimeter> popularimeters = const [];
+    final popularimetersCount = item.popularimeters_count;
+    if (popularimetersCount > 0) {
+      final bytes = item.popularimeters.asTypedList(item.popularimeters_size);
+      final data = ByteData.sublistView(bytes);
+      var offset = 0;
+      popularimeters = List<TagLibPopularimeter>.generate(
+        popularimetersCount,
+        (_) {
+          final emailLength = data.getUint32(offset, Endian.host);
+          offset += 4;
+          final emailEnd = offset + emailLength;
+          final email = _batchUtf8Decoder.convert(bytes, offset, emailEnd);
+          final rating = data.getUint32(emailEnd, Endian.host);
+          final counter = data.getUint32(emailEnd + 4, Endian.host);
+          offset = emailEnd + 8;
+          return TagLibPopularimeter(email: email, rating: rating, counter: counter);
+        },
+        growable: false,
+      );
+    }
+
     String? format;
     final formatPtr = item.format;
     if (formatPtr != ffi.nullptr) format = formatPtr.cast<Utf8>().toDartString();
     final bitrateMode = item.bitrate_mode.cast<Utf8>().toDartString();
     final duration = Duration(milliseconds: item.duration_ms);
     final lossless = item.lossless;
+    final asfSharedUserRating = item.asf_shared_user_rating;
     final bitsPerSample = item.bits_per_sample;
     final audioInfo = AudioInfo(
       format: format,
@@ -972,6 +1027,8 @@ class TagLibFile {
       audioInfo: audioInfo,
       properties: properties,
       chapters: chapters,
+      popularimeters: popularimeters,
+      asfSharedUserRating: asfSharedUserRating < 0 ? null : asfSharedUserRating,
       coverData: coverData,
     );
   }
@@ -1615,6 +1672,77 @@ class TagLibFile {
     }
   }
 
+  /// Returns the ID3v2 POPM frames of the file, empty when it has none.
+  ///
+  /// Returns `null` when the format can't hold an ID3v2 tag (only mp3, wav,
+  /// aiff, dsf, dff and tta can).
+  List<TagLibPopularimeter>? readPopularimeters() {
+    _checkClosed();
+    final handle = bindings.taglib_bridge_popularimeters_get(_handle);
+    if (handle == ffi.nullptr) return null;
+    try {
+      final count = bindings.taglib_bridge_popularimeters_size(handle);
+      return List<TagLibPopularimeter>.generate(
+        count,
+        (index) {
+          final email = bindings.taglib_bridge_popularimeters_email(handle, index).cast<Utf8>().toDartString();
+          final rating = bindings.taglib_bridge_popularimeters_rating(handle, index);
+          final counter = bindings.taglib_bridge_popularimeters_counter(handle, index);
+          return TagLibPopularimeter(email: email, rating: rating, counter: counter);
+        },
+        growable: false,
+      );
+    } finally {
+      bindings.taglib_bridge_popularimeters_free(handle);
+    }
+  }
+
+  /// Replaces the ID3v2 POPM frames of the file.
+  ///
+  /// Pass an empty list to remove them all.
+  ///
+  /// Returns `false` when the format can't hold an ID3v2 tag.
+  bool setPopularimeters(List<TagLibPopularimeter> popularimeters) {
+    _checkClosed();
+    final handle = bindings.taglib_bridge_popularimeters_create();
+    try {
+      for (final popularimeter in popularimeters) {
+        final emailPtr = popularimeter.email.toNativeUtf8();
+        try {
+          bindings.taglib_bridge_popularimeters_add(handle, emailPtr.cast(), popularimeter.rating, popularimeter.counter);
+        } finally {
+          malloc.free(emailPtr);
+        }
+      }
+      return bindings.taglib_bridge_popularimeters_set(_handle, handle) == 1;
+    } finally {
+      bindings.taglib_bridge_popularimeters_free(handle);
+    }
+  }
+
+  TagLibTagType getTagType() {
+    _checkClosed();
+    final value = bindings.taglib_bridge_get_tag_type(_handle);
+    return TagLibTagType.fromValue(value);
+  }
+
+  /// Returns the ASF `WM/SharedUserRating` attribute: 1-99, 0 when unrated.
+  ///
+  /// Returns `null` when the format isn't ASF (wma, wmv).
+  int? readAsfSharedUserRating() {
+    _checkClosed();
+    final rating = bindings.taglib_bridge_asf_shared_user_rating_get(_handle);
+    return rating < 0 ? null : rating;
+  }
+
+  /// Sets the ASF `WM/SharedUserRating` attribute, clamped to 0-99. 0 removes it.
+  ///
+  /// Returns `false` when the format isn't ASF (wma, wmv).
+  bool setAsfSharedUserRating(int rating) {
+    _checkClosed();
+    return bindings.taglib_bridge_asf_shared_user_rating_set(_handle, rating) == 1;
+  }
+
   /// (iOS only) Lets the user pick an audio file for editing.
   ///
   /// The returned object tracks the working copy and can commit changes back
@@ -1882,6 +2010,8 @@ class TagLibBatchResult {
     required this.audioInfo,
     required this.properties,
     required this.chapters,
+    required this.popularimeters,
+    required this.asfSharedUserRating,
     required this.coverData,
   });
 
@@ -1898,10 +2028,47 @@ class TagLibBatchResult {
   /// Sorted by [TagLibChapter.start], only when requested and present.
   final List<TagLibChapter> chapters;
 
+  /// Same as [TagLibFile.readPopularimeters], empty when the format can't hold them.
+  final List<TagLibPopularimeter> popularimeters;
+
+  /// Same as [TagLibFile.readAsfSharedUserRating].
+  final int? asfSharedUserRating;
+
   /// Front cover bytes, only when requested and present.
   final Uint8List? coverData;
 
   bool get success => audioInfo != null;
+}
+
+/// An ID3v2 POPM frame, read by [TagLibFile.readPopularimeters] or written by [TagLibFile.setPopularimeters].
+///
+/// Players keep one per [email], and most of them rate whole stars as 1, 64, 128, 196 and 255.
+class TagLibPopularimeter {
+  const TagLibPopularimeter({
+    required this.email,
+    required this.rating,
+    this.counter = 0,
+  });
+
+  /// Identifies the player or user that wrote the frame (ex: `Windows Media Player 9 Series`), can be empty.
+  final String email;
+
+  /// From 1 (worst) to 255 (best), 0 when unknown.
+  final int rating;
+
+  /// Play count.
+  final int counter;
+
+  @override
+  bool operator ==(Object other) {
+    return other is TagLibPopularimeter && other.email == email && other.rating == rating && other.counter == counter;
+  }
+
+  @override
+  int get hashCode => Object.hash(email, rating, counter);
+
+  @override
+  String toString() => 'TagLibPopularimeter(email: $email, rating: $rating, counter: $counter)';
 }
 
 /// A chapter read by [TagLibFile.readBatchNative] or written by [TagLibFile.setChapters].

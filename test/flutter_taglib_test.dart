@@ -644,6 +644,245 @@ void main() {
     });
   });
 
+  group('Popularimeters', () {
+    const popularimeters = [
+      TagLibPopularimeter(email: 'Windows Media Player 9 Series', rating: 196),
+      TagLibPopularimeter(email: 'no@email', rating: 64, counter: 12),
+      TagLibPopularimeter(email: '', rating: 255, counter: 4294967295),
+    ];
+
+    Future<List<TagLibPopularimeter>> readBatch(String path) async {
+      final res = (await TagLibFile.readBatchNative([path]).toList()).single;
+      return res.popularimeters;
+    }
+
+    String copyAsset(Directory dir, String ext) {
+      final path = '${dir.path}/popm.$ext';
+      File('test/assets/01 TempleOS Hymn Risen (Remix).$ext').copySync(path);
+      return path;
+    }
+
+    for (final ext in ['mp3', 'wav', 'aiff']) {
+      test('Write, read & remove popularimeters ($ext)', () async {
+        final dir = Directory.systemTemp.createTempSync('flutter_taglib_popm');
+        try {
+          final path = copyAsset(dir, ext);
+          final file = TagLibFile.open(path)!;
+          expect(file.readPopularimeters(), isEmpty);
+          expect(file.setPopularimeters(popularimeters), isTrue);
+          expect(file.save(), isTrue);
+          file.close();
+
+          final reopened = TagLibFile.open(path)!;
+          expect(reopened.readPopularimeters(), equals(popularimeters));
+          expect(reopened.title, equals('TempleOS Hymn Risen (Remix)'));
+          expect(await readBatch(path), equals(popularimeters));
+
+          expect(reopened.setPopularimeters(const []), isTrue);
+          expect(reopened.save(), isTrue);
+          reopened.close();
+          final cleared = TagLibFile.open(path)!;
+          expect(cleared.readPopularimeters(), isEmpty);
+          cleared.close();
+          expect(await readBatch(path), isEmpty);
+        } finally {
+          dir.deleteSync(recursive: true);
+        }
+      });
+
+      test('setProperties keeps popularimeters ($ext)', () async {
+        final dir = Directory.systemTemp.createTempSync('flutter_taglib_popm');
+        try {
+          final path = copyAsset(dir, ext);
+          final file = TagLibFile.open(path)!;
+          file.setPopularimeters(popularimeters);
+          file.save();
+          file.close();
+
+          final reopened = TagLibFile.open(path)!;
+          final properties = reopened.properties;
+          properties['TITLE'] = ['New Title'];
+          properties['RATING'] = ['80'];
+          reopened.setProperties(properties);
+          expect(reopened.save(), isTrue);
+          reopened.close();
+
+          final res = (await TagLibFile.readBatchNative([path]).toList()).single;
+          expect(res.properties['TITLE'], equals(['New Title']));
+          expect(res.properties['RATING'], equals(['80']));
+          expect(res.popularimeters, equals(popularimeters));
+        } finally {
+          dir.deleteSync(recursive: true);
+        }
+      });
+    }
+
+    test('Untagged mp3 gets a new ID3v2 tag holding only popularimeters', () async {
+      final dir = Directory.systemTemp.createTempSync('flutter_taglib_popm');
+      try {
+        final path = copyAsset(dir, 'mp3');
+        final file = TagLibFile.open(path)!;
+        file.setProperties(const {});
+        file.setPictures(const []);
+        expect(file.save(), isTrue);
+        file.close();
+
+        final sizeBefore = File(path).lengthSync();
+        final untagged = TagLibFile.open(path)!;
+        expect(untagged.properties, isEmpty);
+        expect(untagged.readPopularimeters(), isEmpty);
+        expect(untagged.save(), isTrue);
+        untagged.close();
+        expect(File(path).lengthSync(), equals(sizeBefore)); // -- reading must not leave an empty tag behind
+
+        final rated = TagLibFile.open(path)!;
+        expect(rated.setPopularimeters(const [TagLibPopularimeter(email: 'a', rating: 1)]), isTrue);
+        expect(rated.save(), isTrue);
+        rated.close();
+        expect(File(path).lengthSync(), greaterThan(sizeBefore));
+        expect(await readBatch(path), equals(const [TagLibPopularimeter(email: 'a', rating: 1)]));
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('Rating is clamped to 0-255', () {
+      final dir = Directory.systemTemp.createTempSync('flutter_taglib_popm');
+      try {
+        final path = copyAsset(dir, 'mp3');
+        final file = TagLibFile.open(path)!;
+        file.setPopularimeters(const [
+          TagLibPopularimeter(email: 'high', rating: 300),
+          TagLibPopularimeter(email: 'low', rating: -5),
+        ]);
+        file.save();
+        file.close();
+        final reopened = TagLibFile.open(path)!;
+        expect(reopened.readPopularimeters()!.map((p) => p.rating), equals([255, 0]));
+        reopened.close();
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    for (final ext in ['flac', 'm4a', 'ogg', 'opus', 'spx', 'ape', 'wv', 'mpc', 'webm']) {
+      test('Formats without ID3v2 have no popularimeters ($ext)', () async {
+        final dir = Directory.systemTemp.createTempSync('flutter_taglib_popm');
+        try {
+          final path = copyAsset(dir, ext);
+          final file = TagLibFile.open(path)!;
+          expect(file.readPopularimeters(), isNull);
+          expect(file.setPopularimeters(popularimeters), isFalse);
+          file.close();
+          expect(await readBatch(path), isEmpty);
+        } finally {
+          dir.deleteSync(recursive: true);
+        }
+      });
+    }
+  });
+
+  group('Tag types', () {
+    const tagTypes = {
+      'mp3': TagLibTagType.id3v2, 'wav': TagLibTagType.id3v2, 'aiff': TagLibTagType.id3v2, //
+      'flac': TagLibTagType.xiphComment, 'ogg': TagLibTagType.xiphComment, 'opus': TagLibTagType.xiphComment, 'spx': TagLibTagType.xiphComment, //
+      'm4a': TagLibTagType.mp4, 'ape': TagLibTagType.ape, 'wv': TagLibTagType.ape, 'mpc': TagLibTagType.ape, //
+      'wma': TagLibTagType.asf, 'webm': TagLibTagType.matroska, //
+    };
+    for (final e in tagTypes.entries) {
+      test('${e.key} keeps its tags in ${e.value.name}', () {
+        final file = TagLibFile.open('test/assets/01 TempleOS Hymn Risen (Remix).${e.key}')!;
+        expect(file.getTagType(), e.value);
+        file.close();
+      });
+    }
+  });
+
+  group('ASF rating', () {
+    Future<int?> readBatch(String path) async {
+      final res = (await TagLibFile.readBatchNative([path]).toList()).single;
+      return res.asfSharedUserRating;
+    }
+
+    test('Write, read & remove WM/SharedUserRating', () async {
+      final dir = Directory.systemTemp.createTempSync('flutter_taglib_asf');
+      try {
+        final path = '${dir.path}/rating.wma';
+        File('test/assets/01 TempleOS Hymn Risen (Remix).wma').copySync(path);
+        final file = TagLibFile.open(path)!;
+        expect(file.readAsfSharedUserRating(), 0);
+        expect(file.setAsfSharedUserRating(75), isTrue);
+        expect(file.save(), isTrue);
+        file.close();
+
+        final reopened = TagLibFile.open(path)!;
+        expect(reopened.readAsfSharedUserRating(), 75);
+        expect(reopened.title, 'TempleOS Hymn Risen (Remix)');
+        expect(await readBatch(path), 75);
+
+        final properties = reopened.properties;
+        properties['TITLE'] = ['New Title'];
+        reopened.setProperties(properties);
+        expect(reopened.save(), isTrue);
+        reopened.close();
+        expect(await readBatch(path), 75);
+
+        final cleared = TagLibFile.open(path)!;
+        expect(cleared.setAsfSharedUserRating(0), isTrue);
+        expect(cleared.save(), isTrue);
+        cleared.close();
+        expect(await readBatch(path), 0);
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('Rating is clamped to 0-99', () {
+      final dir = Directory.systemTemp.createTempSync('flutter_taglib_asf');
+      try {
+        final path = '${dir.path}/rating.wma';
+        File('test/assets/01 TempleOS Hymn Risen (Remix).wma').copySync(path);
+        final file = TagLibFile.open(path)!;
+        file.setAsfSharedUserRating(300);
+        file.save();
+        file.close();
+        final reopened = TagLibFile.open(path)!;
+        expect(reopened.readAsfSharedUserRating(), 99);
+        reopened.close();
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('A rating written as text is read, and replaced by a number', () async {
+      final dir = Directory.systemTemp.createTempSync('flutter_taglib_asf');
+      try {
+        final path = '${dir.path}/rating.wma';
+        File('test/assets/asf_text_rating.wma').copySync(path);
+        expect(await readBatch(path), 75);
+        final file = TagLibFile.open(path)!;
+        expect(file.readAsfSharedUserRating(), 75);
+        expect(file.setAsfSharedUserRating(50), isTrue);
+        expect(file.save(), isTrue);
+        file.close();
+        expect(await readBatch(path), 50);
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    for (final ext in ['mp3', 'flac', 'm4a', 'webm']) {
+      test('Formats other than ASF have no WM/SharedUserRating ($ext)', () async {
+        final path = 'test/assets/01 TempleOS Hymn Risen (Remix).$ext';
+        final file = TagLibFile.open(path)!;
+        expect(file.readAsfSharedUserRating(), isNull);
+        expect(file.setAsfSharedUserRating(50), isFalse);
+        file.close();
+        expect(await readBatch(path), isNull);
+      });
+    }
+  });
+
   group('HTTP Range Streaming', () {
     late HttpServer server;
     int totalBytesServed = 0;

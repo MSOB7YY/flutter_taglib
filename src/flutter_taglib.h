@@ -124,6 +124,39 @@ FFI_PLUGIN_EXPORT int taglib_bridge_properties_value_count(TagLibBridgePropertie
 FFI_PLUGIN_EXPORT const char* taglib_bridge_properties_value(TagLibBridgeProperties* props, const char* key, int value_index);
 FFI_PLUGIN_EXPORT void taglib_bridge_properties_add(TagLibBridgeProperties* props, const char* key, const char* value);
 
+// ID3v2 POPM (popularimeter) frames: a rating (1-255, 0 when unknown) and a play
+// counter per email. Most players keep their rating there for mp3, wav, aiff,
+// dsf, dff and tta files.
+typedef struct TagLibBridgePopularimeters TagLibBridgePopularimeters;
+
+FFI_PLUGIN_EXPORT TagLibBridgePopularimeters* taglib_bridge_popularimeters_create();
+FFI_PLUGIN_EXPORT void taglib_bridge_popularimeters_free(TagLibBridgePopularimeters* popularimeters);
+// Returns NULL when the format has no ID3v2 tag.
+FFI_PLUGIN_EXPORT TagLibBridgePopularimeters* taglib_bridge_popularimeters_get(TagLibBridgeFile* file);
+// Replaces all POPM frames, an empty list removes them.
+// Returns 1 on success, 0 when the format has no ID3v2 tag.
+FFI_PLUGIN_EXPORT int taglib_bridge_popularimeters_set(TagLibBridgeFile* file, TagLibBridgePopularimeters* popularimeters);
+FFI_PLUGIN_EXPORT int taglib_bridge_popularimeters_size(TagLibBridgePopularimeters* popularimeters);
+FFI_PLUGIN_EXPORT const char* taglib_bridge_popularimeters_email(TagLibBridgePopularimeters* popularimeters, int index);
+FFI_PLUGIN_EXPORT int taglib_bridge_popularimeters_rating(TagLibBridgePopularimeters* popularimeters, int index);
+FFI_PLUGIN_EXPORT uint32_t taglib_bridge_popularimeters_counter(TagLibBridgePopularimeters* popularimeters, int index);
+// rating is clamped to 0-255.
+FFI_PLUGIN_EXPORT void taglib_bridge_popularimeters_add(TagLibBridgePopularimeters* popularimeters, const char* email, int rating, uint32_t counter);
+
+// The tag a format keeps its properties in: 0 unknown, 1 ID3v2 (mp3, wav, aiff,
+// dsf, dff, tta), 2 Xiph comment (flac, ogg, opus, spx), 3 MP4, 4 APE (ape, wv,
+// mpc), 5 ASF (wma, wmv), 6 Matroska (mka, mkv, webm), 7 tracker modules (mod,
+// s3m, it, xm), which only hold a title and a comment.
+FFI_PLUGIN_EXPORT int taglib_bridge_get_tag_type(TagLibBridgeFile* file);
+
+// The ASF WM/SharedUserRating attribute: 1-99, 0 when unrated. Windows and most
+// players keep the wma/wmv rating there, TagLib leaves it out of the property map.
+// Returns -1 when the format isn't ASF.
+FFI_PLUGIN_EXPORT int taglib_bridge_asf_shared_user_rating_get(TagLibBridgeFile* file);
+// rating is clamped to 0-99, 0 removes it.
+// Returns 1 on success, 0 when the format isn't ASF.
+FFI_PLUGIN_EXPORT int taglib_bridge_asf_shared_user_rating_set(TagLibBridgeFile* file, int rating);
+
 // Replaces the file's chapters, count 0 removes them. Each chapter ends where
 // the next one starts, the last one at the end of the file. Written as ID3v2
 // CHAP frames, MP4 Nero chapters, Matroska chapters or Xiph CHAPTERxxx comments.
@@ -147,6 +180,7 @@ typedef struct TagLibBatchItem {
     int32_t channels;
     int32_t bits_per_sample;
     int32_t lossless; // 1 lossless, 0 lossy, -1 unknown
+    int32_t asf_shared_user_rating; // same as taglib_bridge_asf_shared_user_rating_get
     // Packed properties: properties_count entries of
     // [u32 key length][key][u32 values count]([u32 value length][value])...
     // in native byte order, strings are UTF-8 without terminators.
@@ -159,6 +193,12 @@ typedef struct TagLibBatchItem {
     uint32_t chapters_count;
     uint32_t chapters_size;
     const uint8_t* chapters;
+    // Packed ID3v2 POPM frames: popularimeters_count entries of
+    // [u32 email length][email][u32 rating][u32 counter]
+    // in native byte order, emails are UTF-8 without terminators.
+    uint32_t popularimeters_count;
+    uint32_t popularimeters_size;
+    const uint8_t* popularimeters;
     const char* format; // NULL when undetermined
     const char* bitrate_mode;
     // Front cover bytes, NULL when absent or not requested. Owned by the

@@ -34,6 +34,7 @@
 #include <tpropertymap.h>
 #include <mpeg/id3v2/id3v2tag.h>
 #include <mpeg/id3v2/frames/chapterframe.h>
+#include <mpeg/id3v2/frames/popularimeterframe.h>
 #include <mpeg/id3v2/frames/tableofcontentsframe.h>
 #include <mpeg/id3v2/frames/textidentificationframe.h>
 #include <matroska/matroskachapters.h>
@@ -2955,6 +2956,204 @@ int taglib_bridge_set_chapters(TagLibBridgeFile* file, const uint32_t* starts_ms
 } // extern "C"
 
 // by claude
+// Popularimeters: ID3v2 POPM frames, which TagLib leaves out of the property map.
+
+struct BridgePopularimeter {
+    std::string email;
+    int rating;
+    uint32_t counter;
+};
+
+struct TagLibBridgePopularimeters {
+    std::vector<BridgePopularimeter> entries;
+};
+
+static void read_popularimeters(const TagLib::ID3v2::Tag* tag, std::vector<BridgePopularimeter>& out) {
+    for (const auto* frame : tag->frameList("POPM")) {
+        const auto* popm = dynamic_cast<const TagLib::ID3v2::PopularimeterFrame*>(frame);
+        if (!popm) continue;
+        out.push_back({popm->email().to8Bit(true), popm->rating(), popm->counter()});
+    }
+}
+
+extern "C" {
+
+TagLibBridgePopularimeters* taglib_bridge_popularimeters_create() {
+    return new TagLibBridgePopularimeters();
+}
+
+void taglib_bridge_popularimeters_free(TagLibBridgePopularimeters* popularimeters) {
+    delete popularimeters;
+}
+
+TagLibBridgePopularimeters* taglib_bridge_popularimeters_get(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return nullptr;
+    try {
+        // -- created when missing, so formats that can hold the tag still return a list. save() skips an empty tag
+        const auto* tag = id3v2_tag_of(file->fileRef->file(), true);
+        if (!tag) return nullptr;
+        auto* popularimeters = new TagLibBridgePopularimeters();
+        read_popularimeters(tag, popularimeters->entries);
+        return popularimeters;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+int taglib_bridge_popularimeters_set(TagLibBridgeFile* file, TagLibBridgePopularimeters* popularimeters) {
+    if (!file || !file->fileRef || file->fileRef->isNull() || !popularimeters) return 0;
+    try {
+        auto* tag = id3v2_tag_of(file->fileRef->file(), true);
+        if (!tag) return 0;
+        tag->removeFrames("POPM");
+        for (const auto& entry : popularimeters->entries) {
+            auto* frame = new TagLib::ID3v2::PopularimeterFrame();
+            frame->setEmail(TagLib::String(entry.email, TagLib::String::UTF8));
+            frame->setRating(entry.rating);
+            frame->setCounter(entry.counter);
+            tag->addFrame(frame);
+        }
+        return 1;
+    } catch (...) {
+        return 0;
+    }
+}
+
+int taglib_bridge_popularimeters_size(TagLibBridgePopularimeters* popularimeters) {
+    if (!popularimeters) return 0;
+    return static_cast<int>(popularimeters->entries.size());
+}
+
+static const BridgePopularimeter* popularimeter_at(TagLibBridgePopularimeters* popularimeters, int index) {
+    if (!popularimeters || index < 0 || index >= static_cast<int>(popularimeters->entries.size())) return nullptr;
+    return &popularimeters->entries[static_cast<size_t>(index)];
+}
+
+const char* taglib_bridge_popularimeters_email(TagLibBridgePopularimeters* popularimeters, int index) {
+    const auto* entry = popularimeter_at(popularimeters, index);
+    return entry ? entry->email.c_str() : "";
+}
+
+int taglib_bridge_popularimeters_rating(TagLibBridgePopularimeters* popularimeters, int index) {
+    const auto* entry = popularimeter_at(popularimeters, index);
+    return entry ? entry->rating : 0;
+}
+
+uint32_t taglib_bridge_popularimeters_counter(TagLibBridgePopularimeters* popularimeters, int index) {
+    const auto* entry = popularimeter_at(popularimeters, index);
+    return entry ? entry->counter : 0;
+}
+
+void taglib_bridge_popularimeters_add(TagLibBridgePopularimeters* popularimeters, const char* email, int rating, uint32_t counter) {
+    if (!popularimeters) return;
+    const int clampedRating = std::clamp(rating, 0, 255);
+    popularimeters->entries.push_back({email ? email : "", clampedRating, counter});
+}
+
+} // extern "C"
+
+// by claude
+// Tag types, and the ASF WM/SharedUserRating attribute TagLib leaves out of the property map.
+
+enum class BridgeTagType : int {
+    unknown = 0,
+    id3v2 = 1,
+    xiphComment = 2,
+    mp4 = 3,
+    ape = 4,
+    asf = 5,
+    matroska = 6,
+    mod = 7,
+};
+
+static BridgeTagType tag_type_of(TagLib::File* f) {
+    if (dynamic_cast<TagLib::MPEG::File*>(f) || dynamic_cast<TagLib::RIFF::WAV::File*>(f) ||
+        dynamic_cast<TagLib::RIFF::AIFF::File*>(f) || dynamic_cast<TagLib::DSF::File*>(f) ||
+        dynamic_cast<TagLib::DSDIFF::File*>(f) || dynamic_cast<TagLib::TrueAudio::File*>(f)) {
+        return BridgeTagType::id3v2;
+    }
+    if (dynamic_cast<TagLib::FLAC::File*>(f) || dynamic_cast<TagLib::Ogg::File*>(f)) return BridgeTagType::xiphComment;
+    if (dynamic_cast<TagLib::MP4::File*>(f)) return BridgeTagType::mp4;
+    if (dynamic_cast<TagLib::APE::File*>(f) || dynamic_cast<TagLib::WavPack::File*>(f) || dynamic_cast<TagLib::MPC::File*>(f)) return BridgeTagType::ape;
+    if (dynamic_cast<TagLib::ASF::File*>(f)) return BridgeTagType::asf;
+    if (dynamic_cast<TagLib::Matroska::File*>(f)) return BridgeTagType::matroska;
+    if (dynamic_cast<TagLib::Mod::FileBase*>(f)) return BridgeTagType::mod;
+    return BridgeTagType::unknown;
+}
+
+static const TagLib::String kAsfSharedUserRating = "WM/SharedUserRating";
+static constexpr int kAsfSharedUserRatingMax = 99;
+
+// -- taggers disagree on the casing of attribute names, TagLib matches its known ones case-insensitively too
+static TagLib::StringList asf_shared_user_rating_names(const TagLib::ASF::Tag* tag) {
+    const TagLib::String upperName = kAsfSharedUserRating.upper();
+    TagLib::StringList names;
+    for (const auto& entry : tag->attributeListMap()) {
+        if (entry.first.upper() == upperName) names.append(entry.first);
+    }
+    return names;
+}
+
+static int read_asf_shared_user_rating(const TagLib::ASF::Tag* tag) {
+    for (const auto& name : asf_shared_user_rating_names(tag)) {
+        for (const auto& attribute : tag->attribute(name)) {
+            long long value = 0;
+            switch (attribute.type()) {
+                case TagLib::ASF::Attribute::UnicodeType:
+                    value = attribute.toString().stripWhiteSpace().toInt();
+                    break;
+                case TagLib::ASF::Attribute::DWordType:
+                case TagLib::ASF::Attribute::QWordType:
+                case TagLib::ASF::Attribute::WordType:
+                    value = static_cast<long long>(attribute.toULongLong());
+                    break;
+                default:
+                    break;
+            }
+            if (value > 0) return static_cast<int>(std::min<long long>(value, kAsfSharedUserRatingMax));
+        }
+    }
+    return 0;
+}
+
+extern "C" {
+
+int taglib_bridge_get_tag_type(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return static_cast<int>(BridgeTagType::unknown);
+    return static_cast<int>(tag_type_of(file->fileRef->file()));
+}
+
+int taglib_bridge_asf_shared_user_rating_get(TagLibBridgeFile* file) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return -1;
+    try {
+        const auto* asf = dynamic_cast<TagLib::ASF::File*>(file->fileRef->file());
+        if (!asf) return -1;
+        return read_asf_shared_user_rating(asf->tag());
+    } catch (...) {
+        return -1;
+    }
+}
+
+int taglib_bridge_asf_shared_user_rating_set(TagLibBridgeFile* file, int rating) {
+    if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
+    try {
+        auto* asf = dynamic_cast<TagLib::ASF::File*>(file->fileRef->file());
+        if (!asf) return 0;
+        auto* tag = asf->tag();
+        for (const auto& name : asf_shared_user_rating_names(tag)) {
+            tag->removeItem(name);
+        }
+        const int clampedRating = std::clamp(rating, 0, kAsfSharedUserRatingMax);
+        if (clampedRating > 0) tag->setAttribute(kAsfSharedUserRating, TagLib::ASF::Attribute(static_cast<unsigned int>(clampedRating)));
+        return 1;
+    } catch (...) {
+        return 0;
+    }
+}
+
+} // extern "C"
+
+// by claude
 // Batch reading: a pool of native threads opens and parses the files, and hands
 // each result to the caller as one packed allocation. Dart isolates are not
 // involved, so a slow disk never holds a Dart mutator thread.
@@ -3031,6 +3230,24 @@ static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, b
     }
     const size_t chaptersSize = region.size() - propertiesSize;
 
+    uint32_t popularimetersCount = 0;
+    if (const auto* id3v2 = id3v2_tag_of(file->fileRef->file(), false)) {
+        std::vector<BridgePopularimeter> popularimeters;
+        read_popularimeters(id3v2, popularimeters);
+        for (const auto& popularimeter : popularimeters) {
+            batch_append_u32(region, static_cast<uint32_t>(popularimeter.email.size()));
+            region.append(popularimeter.email);
+            batch_append_u32(region, static_cast<uint32_t>(popularimeter.rating));
+            batch_append_u32(region, popularimeter.counter);
+            popularimetersCount++;
+        }
+    }
+    const size_t popularimetersOffset = propertiesSize + chaptersSize;
+    const size_t popularimetersSize = region.size() - popularimetersOffset;
+
+    const auto* asf = dynamic_cast<TagLib::ASF::File*>(file->fileRef->file());
+    const int32_t asfSharedUserRating = asf ? read_asf_shared_user_rating(asf->tag()) : -1;
+
     const char* format = taglib_bridge_get_format(file);
     const size_t formatOffset = region.size();
     if (format) {
@@ -3075,12 +3292,16 @@ static TagLibBatchItem* batch_read_item(int32_t index, TagLibBridgeFile* file, b
     item->channels = channels;
     item->bits_per_sample = bitsPerSample;
     item->lossless = lossless;
+    item->asf_shared_user_rating = asfSharedUserRating;
     item->properties_count = propertiesCount;
     item->properties_size = static_cast<uint32_t>(propertiesSize);
     item->properties = regionPtr;
     item->chapters_count = chaptersCount;
     item->chapters_size = static_cast<uint32_t>(chaptersSize);
     item->chapters = regionPtr + propertiesSize;
+    item->popularimeters_count = popularimetersCount;
+    item->popularimeters_size = static_cast<uint32_t>(popularimetersSize);
+    item->popularimeters = regionPtr + popularimetersOffset;
     item->format = format ? reinterpret_cast<const char*>(regionPtr + formatOffset) : nullptr;
     item->bitrate_mode = reinterpret_cast<const char*>(regionPtr + bitrateModeOffset);
     item->cover = cover;
@@ -3132,6 +3353,7 @@ static TagLibBatchItem* batch_failed_item(int32_t index) {
     if (item) {
         item->index = index;
         item->lossless = kLosslessUnknown;
+        item->asf_shared_user_rating = -1;
     }
     return item;
 }

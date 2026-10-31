@@ -420,6 +420,108 @@ external void taglib_bridge_properties_add(
   ffi.Pointer<ffi.Char> value,
 );
 
+@ffi.Native<ffi.Pointer<TagLibBridgePopularimeters> Function()>()
+external ffi.Pointer<TagLibBridgePopularimeters>
+taglib_bridge_popularimeters_create();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<TagLibBridgePopularimeters>)>()
+external void taglib_bridge_popularimeters_free(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+);
+
+/// Returns NULL when the format has no ID3v2 tag.
+@ffi.Native<
+  ffi.Pointer<TagLibBridgePopularimeters> Function(
+    ffi.Pointer<TagLibBridgeFile>,
+  )
+>()
+external ffi.Pointer<TagLibBridgePopularimeters>
+taglib_bridge_popularimeters_get(ffi.Pointer<TagLibBridgeFile> file);
+
+/// Replaces all POPM frames, an empty list removes them.
+/// Returns 1 on success, 0 when the format has no ID3v2 tag.
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<TagLibBridgeFile>,
+    ffi.Pointer<TagLibBridgePopularimeters>,
+  )
+>()
+external int taglib_bridge_popularimeters_set(
+  ffi.Pointer<TagLibBridgeFile> file,
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgePopularimeters>)>()
+external int taglib_bridge_popularimeters_size(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+);
+
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(
+    ffi.Pointer<TagLibBridgePopularimeters>,
+    ffi.Int,
+  )
+>()
+external ffi.Pointer<ffi.Char> taglib_bridge_popularimeters_email(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+  int index,
+);
+
+@ffi.Native<
+  ffi.Int Function(ffi.Pointer<TagLibBridgePopularimeters>, ffi.Int)
+>()
+external int taglib_bridge_popularimeters_rating(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+  int index,
+);
+
+@ffi.Native<
+  ffi.Uint32 Function(ffi.Pointer<TagLibBridgePopularimeters>, ffi.Int)
+>()
+external int taglib_bridge_popularimeters_counter(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+  int index,
+);
+
+/// rating is clamped to 0-255.
+@ffi.Native<
+  ffi.Void Function(
+    ffi.Pointer<TagLibBridgePopularimeters>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Int,
+    ffi.Uint32,
+  )
+>()
+external void taglib_bridge_popularimeters_add(
+  ffi.Pointer<TagLibBridgePopularimeters> popularimeters,
+  ffi.Pointer<ffi.Char> email,
+  int rating,
+  int counter,
+);
+
+/// The tag a format keeps its properties in: 0 unknown, 1 ID3v2 (mp3, wav, aiff,
+/// dsf, dff, tta), 2 Xiph comment (flac, ogg, opus, spx), 3 MP4, 4 APE (ape, wv,
+/// mpc), 5 ASF (wma, wmv), 6 Matroska (mka, mkv, webm), 7 tracker modules (mod,
+/// s3m, it, xm), which only hold a title and a comment.
+@ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgeFile>)>()
+external int taglib_bridge_get_tag_type(ffi.Pointer<TagLibBridgeFile> file);
+
+/// The ASF WM/SharedUserRating attribute: 1-99, 0 when unrated. Windows and most
+/// players keep the wma/wmv rating there, TagLib leaves it out of the property map.
+/// Returns -1 when the format isn't ASF.
+@ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgeFile>)>()
+external int taglib_bridge_asf_shared_user_rating_get(
+  ffi.Pointer<TagLibBridgeFile> file,
+);
+
+/// rating is clamped to 0-99, 0 removes it.
+/// Returns 1 on success, 0 when the format isn't ASF.
+@ffi.Native<ffi.Int Function(ffi.Pointer<TagLibBridgeFile>, ffi.Int)>()
+external int taglib_bridge_asf_shared_user_rating_set(
+  ffi.Pointer<TagLibBridgeFile> file,
+  int rating,
+);
+
 /// Replaces the file's chapters, count 0 removes them. Each chapter ends where
 /// the next one starts, the last one at the end of the file. Written as ID3v2
 /// CHAP frames, MP4 Nero chapters, Matroska chapters or Xiph CHAPTERxxx comments.
@@ -496,6 +598,8 @@ final class TagLibBridgePictures extends ffi.Opaque {}
 
 final class TagLibBridgeProperties extends ffi.Opaque {}
 
+final class TagLibBridgePopularimeters extends ffi.Opaque {}
+
 final class TagLibBatch extends ffi.Opaque {}
 
 /// One file read by a batch. All pointers except cover live inside the item's
@@ -528,6 +632,10 @@ final class TagLibBatchItem extends ffi.Struct {
   @ffi.Int32()
   external int lossless;
 
+  /// same as taglib_bridge_asf_shared_user_rating_get
+  @ffi.Int32()
+  external int asf_shared_user_rating;
+
   /// Packed properties: properties_count entries of
   /// [u32 key length][key][u32 values count]([u32 value length][value])...
   /// in native byte order, strings are UTF-8 without terminators.
@@ -549,6 +657,17 @@ final class TagLibBatchItem extends ffi.Struct {
   external int chapters_size;
 
   external ffi.Pointer<ffi.Uint8> chapters;
+
+  /// Packed ID3v2 POPM frames: popularimeters_count entries of
+  /// [u32 email length][email][u32 rating][u32 counter]
+  /// in native byte order, emails are UTF-8 without terminators.
+  @ffi.Uint32()
+  external int popularimeters_count;
+
+  @ffi.Uint32()
+  external int popularimeters_size;
+
+  external ffi.Pointer<ffi.Uint8> popularimeters;
 
   /// NULL when undetermined
   external ffi.Pointer<ffi.Char> format;

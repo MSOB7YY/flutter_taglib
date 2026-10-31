@@ -206,6 +206,14 @@ encode_all() {
   else
     echo "Warning: 'wavpack' tool not found. Skipping WavPack compression."
   fi
+
+  # 13. WMA
+  echo "Encoding WMA..."
+  ffmpeg -y -i "$TEMP_WAV" -c:a wmav2 -b:a 64k     -metadata title="TempleOS Hymn Risen (Remix)"     -metadata artist="Terry A. Davis"     -metadata album="TempleOS Hymns"     -metadata track="1"     -metadata genre="Electronic"     -metadata date="2020"     "$OUT_DIR/$BASE_NAME.wma"
+
+  # 14. WMA rated by a tagger that writes WM/SharedUserRating as text
+  echo "Encoding WMA with a text rating..."
+  ffmpeg -y -i "$TEMP_WAV" -t 0.5 -c:a wmav2 -b:a 64k     -metadata title="Text Rating"     -metadata WM/SharedUserRating="75"     "$OUT_DIR/asf_text_rating.wma"
 }
 
 encode_all

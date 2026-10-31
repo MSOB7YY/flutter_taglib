@@ -1,3 +1,10 @@
+## 1.8.9
+* feat: `TagLibFile.readAsfSharedUserRating` and `TagLibFile.setAsfSharedUserRating`, read and write the `WM/SharedUserRating` attribute (the wma/wmv rating windows and most players keep). `readBatchNative` returns it in `TagLibBatchResult.asfSharedUserRating`
+* feat: `TagLibFile.getTagType`, the tag a format keeps its properties in (ID3v2, Xiph comment, MP4, APE, ASF, Matroska or tracker modules)
+
+## 1.8.8
+* feat: `TagLibFile.readPopularimeters` and `TagLibFile.setPopularimeters`, read and write ID3v2 POPM frames (the rating and play count most players keep in mp3, wav, aiff, dsf, dff and tta files). `readBatchNative` returns them in `TagLibBatchResult.popularimeters`
+
 ## 1.8.7
 * fix: `readBatchNative` reads `TITLE` from the matroska segment title when there is no `TITLE` tag. It also reads `COMMENT` from the xiph `DESCRIPTION` field when there is no `COMMENT` tag. This matches TagLib's own `Tag::title()` and `Tag::comment()` and covers files tagged by ffmpeg
 
