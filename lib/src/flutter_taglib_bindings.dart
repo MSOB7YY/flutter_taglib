@@ -182,6 +182,10 @@ int taglib_bridge_has_cover(ffi.Pointer<TagLibBridgeFile> file) {
   return generated.taglib_bridge_has_cover(file);
 }
 
+ffi.Pointer<ffi.Char> taglib_bridge_get_cover_mime_type(ffi.Pointer<TagLibBridgeFile> file) {
+  return generated.taglib_bridge_get_cover_mime_type(file);
+}
+
 int taglib_bridge_front_cover_size(ffi.Pointer<TagLibBridgeFile> file) {
   return generated.taglib_bridge_front_cover_size(file);
 }

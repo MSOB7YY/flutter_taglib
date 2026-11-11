@@ -87,7 +87,8 @@ FFI_PLUGIN_EXPORT int taglib_bridge_get_cover_data(TagLibBridgeFile* file, uint8
 FFI_PLUGIN_EXPORT const char* taglib_bridge_get_cover_mime_type(TagLibBridgeFile* file);
 
 // Front cover bytes only, without materializing the other pictures or their
-// metadata. Prefers the picture typed "Front Cover", falling back to the first.
+// metadata. Prefers the picture typed "Front Cover", falling back to the first
+// one that is not a "Back Cover". The cover APIs above use the same pick.
 // Call taglib_bridge_front_cover_size first: it resolves and caches the bytes
 // and returns their size (0 when there is no cover). Then call
 // taglib_bridge_front_cover_data to copy them out, which releases the cache.

@@ -1,3 +1,7 @@
+## 1.9.0
+* fix: a file whose only picture is a back cover no longer shows it as the cover. Files without a front cover still show their first other picture
+* feat: `TagLibFile.coverIndexOf`, the index of the cover in a picture list by the same rule
+
 ## 1.8.9
 * feat: `TagLibFile.readAsfSharedUserRating` and `TagLibFile.setAsfSharedUserRating`, read and write the `WM/SharedUserRating` attribute (the wma/wmv rating windows and most players keep). `readBatchNative` returns it in `TagLibBatchResult.asfSharedUserRating`
 * feat: `TagLibFile.getTagType`, the tag a format keeps its properties in (ID3v2, Xiph comment, MP4, APE, ASF, Matroska or tracker modules)

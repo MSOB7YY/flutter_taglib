@@ -1557,9 +1557,21 @@ class TagLibFile {
     return null;
   }
 
+  /// Index of the cover in [pictures]: the first `Front Cover`, else the first picture that isn't a `Back Cover`, else -1.
+  /// Same rule as [coverData] and [hasCover], a back cover alone is never the cover.
+  static int coverIndexOf(List<Picture> pictures) {
+    var firstNotBackIndex = -1;
+    for (var index = 0; index < pictures.length; index++) {
+      final pictureType = pictures[index].pictureType;
+      if (pictureType == 'Front Cover') return index;
+      if (firstNotBackIndex == -1 && pictureType != 'Back Cover') firstNotBackIndex = index;
+    }
+    return firstNotBackIndex;
+  }
+
   /// Retrieves the cover art image bytes as a [Uint8List].
   ///
-  /// Returns picture typed `Front Cover', or the first picture, or `null` if the file has no cover art.
+  /// Returns the cover picked by [coverIndexOf], or `null` if the file has no cover art.
   Uint8List? get coverData {
     _checkClosed();
     final size = bindings.taglib_bridge_front_cover_size(_handle);
@@ -1584,9 +1596,8 @@ class TagLibFile {
   /// Returns `null` if the file has no cover art.
   String? get coverMimeType {
     _checkClosed();
-    if (pictures.isEmpty) return null;
-    final mime = pictures.first.mimeType.trim();
-    return mime.isEmpty ? null : mime;
+    final mimePointer = bindings.taglib_bridge_get_cover_mime_type(_handle);
+    return _pointerToString(mimePointer);
   }
 
   /// Replaces all embedded pictures in the file.

@@ -1,6 +1,8 @@
 // ignore_for_file: avoid_print
 
 import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:test/test.dart';
 import 'package:flutter_taglib/flutter_taglib.dart';
 
@@ -230,10 +232,7 @@ void main() {
         } else {
           expect(frontCover, isNotNull);
           print('Front cover: ${frontCover!.length} bytes');
-          final expected = pictures.firstWhere(
-            (picture) => picture.pictureType == 'Front Cover',
-            orElse: () => pictures.first,
-          );
+          final expected = pictures[TagLibFile.coverIndexOf(pictures)];
           expect(frontCover, equals(expected.bytes));
         }
         file.close();
@@ -385,6 +384,42 @@ void main() {
           expect(backCover.bytes, equals(coverBytes));
           expect(file2.pictureOfType('Media'), isNull);
           file2.close();
+        }
+      }
+    });
+
+    test('A back cover alone is never the cover', () {
+      final coverBytes = File('test/assets/cover.jpg').readAsBytesSync();
+      final otherBytes = Uint8List.fromList([...coverBytes, 0]);
+      Picture picture(Uint8List bytes, String pictureType) => Picture(bytes: bytes, mimeType: 'image/jpeg', pictureType: pictureType);
+      final cases = <(List<Picture>, Uint8List?)>[
+        ([picture(coverBytes, 'Back Cover')], null),
+        ([picture(coverBytes, 'Back Cover'), picture(otherBytes, 'Other')], otherBytes),
+        ([picture(otherBytes, 'Back Cover'), picture(coverBytes, 'Front Cover')], coverBytes),
+        ([picture(otherBytes, 'Other'), picture(coverBytes, 'Front Cover')], coverBytes),
+      ];
+      const extensions = ['mp3', 'flac', 'ogg', 'opus', 'wma'];
+      for (final extension in extensions) {
+        for (final (index, (pictures, expectedCover)) in cases.indexed) {
+          final reason = '$extension case $index';
+          final path = '${tempDir.path}/cover_pick_$index.$extension';
+          File('test/assets/01 TempleOS Hymn Risen (Remix).$extension').copySync(path);
+
+          final file = TagLibFile.open(path)!;
+          expect(file.setPictures(pictures), isTrue, reason: reason);
+          expect(file.save(), isTrue, reason: reason);
+          file.close();
+
+          final readFile = TagLibFile.open(path)!;
+          final readPictures = readFile.pictures;
+          expect(readPictures.map((e) => e.pictureType), pictures.map((e) => e.pictureType), reason: reason);
+          expect(readFile.hasCover, expectedCover != null, reason: reason);
+          expect(readFile.coverData, expectedCover, reason: reason);
+          expect(readFile.coverMimeType, expectedCover == null ? null : 'image/jpeg', reason: reason);
+          final coverIndex = TagLibFile.coverIndexOf(readPictures);
+          final coverOfIndex = coverIndex == -1 ? null : readPictures[coverIndex].bytes;
+          expect(coverOfIndex, expectedCover, reason: reason);
+          readFile.close();
         }
       }
     });

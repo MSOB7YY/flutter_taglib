@@ -365,6 +365,21 @@ static TagLib::List<TagLib::VariantMap> read_picture_list(TagLibBridgeFile* file
     return file->fileRef->complexProperties("PICTURE");
 }
 
+static bool picture_type_is(const TagLib::VariantMap& picture, const char* pictureType) {
+    auto typeVar = picture["pictureType"];
+    return !typeVar.isEmpty() && typeVar.toString() == pictureType;
+}
+
+// -- a back cover alone is never the cover, same rule as `TagLibFile.coverIndexOf`
+static const TagLib::VariantMap* select_cover_picture(const TagLib::List<TagLib::VariantMap>& pictures) {
+    const TagLib::VariantMap* firstNotBack = nullptr;
+    for (const auto& picture : pictures) {
+        if (picture_type_is(picture, "Front Cover")) return &picture;
+        if (!firstNotBack && !picture_type_is(picture, "Back Cover")) firstNotBack = &picture;
+    }
+    return firstNotBack;
+}
+
 static const TagLib::VariantMap* picture_at(const TagLibBridgePictures* pictures, int index) {
     if (!pictures || index < 0 || index >= static_cast<int>(pictures->cachedPictures.size())) {
         return nullptr;
@@ -2385,7 +2400,7 @@ int taglib_bridge_has_cover(TagLibBridgeFile* file) {
     if (file->hasCoverResolved) return file->cachedHasCover;
     try {
         auto pictures = read_picture_list(file);
-        file->cachedHasCover = !pictures.isEmpty() ? 1 : 0;
+        file->cachedHasCover = select_cover_picture(pictures) != nullptr ? 1 : 0;
         file->hasCoverResolved = true;
         return file->cachedHasCover;
     } catch (...) {
@@ -2397,8 +2412,9 @@ uint32_t taglib_bridge_get_cover_data_size(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull()) return 0;
     try {
         auto pictures = read_picture_list(file);
-        if (pictures.isEmpty()) return 0;
-        auto dataVar = pictures.front()["data"];
+        const auto* cover = select_cover_picture(pictures);
+        if (!cover) return 0;
+        auto dataVar = (*cover)["data"];
         if (dataVar.isEmpty()) return 0;
         return dataVar.toByteVector().size();
     } catch (...) {
@@ -2410,8 +2426,9 @@ int taglib_bridge_get_cover_data(TagLibBridgeFile* file, uint8_t* buffer, uint32
     if (!file || !file->fileRef || file->fileRef->isNull() || !buffer || buffer_size == 0) return 0;
     try {
         auto pictures = read_picture_list(file);
-        if (pictures.isEmpty()) return 0;
-        auto dataVar = pictures.front()["data"];
+        const auto* cover = select_cover_picture(pictures);
+        if (!cover) return 0;
+        auto dataVar = (*cover)["data"];
         if (dataVar.isEmpty()) return 0;
         auto byteVector = dataVar.toByteVector();
         uint32_t toCopy = byteVector.size() < buffer_size ? byteVector.size() : buffer_size;
@@ -2426,8 +2443,9 @@ const char* taglib_bridge_get_cover_mime_type(TagLibBridgeFile* file) {
     if (!file || !file->fileRef || file->fileRef->isNull()) return "";
     try {
         auto pictures = read_picture_list(file);
-        if (pictures.isEmpty()) return "";
-        auto mimeVar = pictures.front()["mimeType"];
+        const auto* cover = select_cover_picture(pictures);
+        if (!cover) return "";
+        auto mimeVar = (*cover)["mimeType"];
         if (mimeVar.isEmpty()) return "";
         file->cachedCoverMime = mimeVar.toString().to8Bit(true);
         return file->cachedCoverMime.c_str();
@@ -2442,19 +2460,8 @@ uint32_t taglib_bridge_front_cover_size(TagLibBridgeFile* file) {
         file->cachedFrontCover = TagLib::ByteVector();
 
         auto pictures = read_picture_list(file);
-        if (pictures.isEmpty()) return 0;
-
-        // Prefer an explicitly typed front cover; otherwise take the first picture,
-        // matching how embedded art is conventionally ordered.
-        const TagLib::VariantMap* selected = nullptr;
-        for (const auto& picture : pictures) {
-            auto typeVar = picture["pictureType"];
-            if (!typeVar.isEmpty() && typeVar.toString() == "Front Cover") {
-                selected = &picture;
-                break;
-            }
-        }
-        if (!selected) selected = &pictures.front();
+        const auto* selected = select_cover_picture(pictures);
+        if (!selected) return 0;
 
         auto dataVar = (*selected)["data"];
         if (dataVar.isEmpty()) return 0;
