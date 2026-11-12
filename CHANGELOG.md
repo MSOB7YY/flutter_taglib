@@ -1,3 +1,6 @@
+## 1.9.1
+* fix: building from source failed with `redefinition of 'entryForCodePage'`. TagLib's code page tables are now built in, so wav text is decoded in the code page named by its `CSET` chunk and aiff text chunks are decoded as Mac OS Roman, like upstream TagLib does
+
 ## 1.9.0
 * fix: a file whose only picture is a back cover no longer shows it as the cover. Files without a front cover still show their first other picture
 * feat: `TagLibFile.coverIndexOf`, the index of the cover in a picture list by the same rule
