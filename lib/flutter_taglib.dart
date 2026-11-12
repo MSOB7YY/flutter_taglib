@@ -2237,6 +2237,9 @@ abstract final class TagProperties {
 
   /// The related URL (URL).
   static const String url = 'URL';
+
+  /// The explicit content advisory (ITUNESADVISORY), `1` explicit and `2` clean. The `rtng` atom in mp4.
+  static const String itunesAdvisory = 'ITUNESADVISORY';
 }
 
 class _TagLibBatchWorkerParams {

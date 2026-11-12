@@ -918,6 +918,92 @@ void main() {
     }
   });
 
+  group('Explicit advisory', () {
+    late Directory dir;
+    setUp(() => dir = Directory.systemTemp.createTempSync('flutter_taglib_advisory'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    String copyOf(String extension) {
+      final path = '${dir.path}/advisory.$extension';
+      File('test/assets/01 TempleOS Hymn Risen (Remix).$extension').copySync(path);
+      return path;
+    }
+
+    Map<String, List<String>> writeAdvisory(String path, String key, String? value) {
+      final file = TagLibFile.open(path)!;
+      final properties = file.properties;
+      if (value == null) {
+        properties.remove(key);
+      } else {
+        properties[key] = [value];
+      }
+      final unsupported = file.setProperties(properties);
+      expect(file.save(), isTrue);
+      file.close();
+      return unsupported;
+    }
+
+    Future<List<String>?> readBatch(String path) async {
+      final res = (await TagLibFile.readBatchNative([path]).toList()).single;
+      return res.properties[TagProperties.itunesAdvisory];
+    }
+
+    int indexOfAscii(List<int> bytes, String text) {
+      final codes = text.codeUnits;
+      for (int i = 0; i <= bytes.length - codes.length; i++) {
+        int j = 0;
+        while (j < codes.length && bytes[i + j] == codes[j]) {
+          j++;
+        }
+        if (j == codes.length) return i;
+      }
+      return -1;
+    }
+
+    for (final extension in ['m4a', 'mp3', 'flac', 'ogg', 'opus', 'spx', 'wv', 'ape', 'mpc', 'aiff', 'wav', 'webm']) {
+      test('Write, read & remove ($extension)', () async {
+        final path = copyOf(extension);
+        expect(writeAdvisory(path, TagProperties.itunesAdvisory, '1'), isEmpty);
+        expect(await readBatch(path), ['1']);
+        writeAdvisory(path, TagProperties.itunesAdvisory, '2');
+        expect(await readBatch(path), ['2']);
+        writeAdvisory(path, TagProperties.itunesAdvisory, null);
+        expect(await readBatch(path), isNull);
+      });
+    }
+
+    test('wma has no field for it', () {
+      final path = copyOf('wma');
+      final unsupported = writeAdvisory(path, TagProperties.itunesAdvisory, '1');
+      expect(unsupported.keys, contains(TagProperties.itunesAdvisory));
+    });
+
+    test('mp4 keeps it in the rtng atom', () {
+      final path = copyOf('m4a');
+      writeAdvisory(path, TagProperties.itunesAdvisory, '1');
+      final bytes = File(path).readAsBytesSync();
+      expect(indexOfAscii(bytes, 'rtng'), isNot(-1));
+      expect(indexOfAscii(bytes, TagProperties.itunesAdvisory), -1);
+    });
+
+    test('mp4 removal also drops an old freeform atom', () async {
+      final path = copyOf('m4a');
+      // -- the freeform name can't be written anymore, so a same-length name is patched in
+      writeAdvisory(path, 'ITUNESADVISORZ', '1');
+      final bytes = File(path).readAsBytesSync();
+      final nameIndex = indexOfAscii(bytes, 'ITUNESADVISORZ');
+      bytes[nameIndex + 13] = 'Y'.codeUnitAt(0);
+      File(path).writeAsBytesSync(bytes);
+      expect(await readBatch(path), ['1']);
+
+      writeAdvisory(path, TagProperties.itunesAdvisory, '2');
+      expect(await readBatch(path), ['2']);
+      writeAdvisory(path, TagProperties.itunesAdvisory, null);
+      expect(await readBatch(path), isNull);
+      expect(indexOfAscii(File(path).readAsBytesSync(), TagProperties.itunesAdvisory), -1);
+    });
+  });
+
   group('HTTP Range Streaming', () {
     late HttpServer server;
     int totalBytesServed = 0;

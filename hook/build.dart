@@ -104,7 +104,7 @@ void main(List<String> args) async {
     }
 
     // --- Online Fetch TagLib & utfcpp ---
-    final taglibVersion = '2.3.1-c3';
+    final taglibVersion = '2.3.1-c4';
     final utfcppVersion = '4.2.0';
 
     final cacheDir = Directory('.dart_tool/flutter_taglib');

@@ -1,6 +1,7 @@
 ## 1.9.0
 * fix: a file whose only picture is a back cover no longer shows it as the cover. Files without a front cover still show their first other picture
 * feat: `TagLibFile.coverIndexOf`, the index of the cover in a picture list by the same rule
+* feat: `ITUNESADVISORY` (`TagProperties.itunesAdvisory`, explicit content) is read and written as the `rtng` atom in mp4 files, like itunes and mp3tag do. Removing it also removes an old `----:com.apple.iTunes:ITUNESADVISORY` atom
 
 ## 1.8.9
 * feat: `TagLibFile.readAsfSharedUserRating` and `TagLibFile.setAsfSharedUserRating`, read and write the `WM/SharedUserRating` attribute (the wma/wmv rating windows and most players keep). `readBatchNative` returns it in `TagLibBatchResult.asfSharedUserRating`
