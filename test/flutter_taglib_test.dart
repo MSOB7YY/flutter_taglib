@@ -424,6 +424,49 @@ void main() {
       }
     });
 
+    test('setCover replaces only the cover', () {
+      final coverBytes = File('test/assets/cover.jpg').readAsBytesSync();
+      final otherBytes = Uint8List.fromList([...coverBytes, 0]);
+      final backBytes = Uint8List.fromList([...coverBytes, 1]);
+      final pngBytes = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, ...List.filled(32, 0)]);
+      Picture picture(Uint8List bytes, String pictureType) => Picture(bytes: bytes, mimeType: 'image/jpeg', pictureType: pictureType);
+      final cases = <(List<Picture>, Uint8List?, List<(String, Uint8List)>, String?)>[
+        ([picture(backBytes, 'Back Cover')], coverBytes, [('Front Cover', coverBytes), ('Back Cover', backBytes)], 'image/jpeg'),
+        (
+          [picture(otherBytes, 'Other'), picture(backBytes, 'Front Cover'), picture(backBytes, 'Back Cover')],
+          coverBytes,
+          [('Other', otherBytes), ('Front Cover', coverBytes), ('Back Cover', backBytes)],
+          'image/jpeg',
+        ),
+        ([picture(otherBytes, 'Back Cover'), picture(otherBytes, 'Other')], pngBytes, [('Back Cover', otherBytes), ('Front Cover', pngBytes)], 'image/png'),
+        ([picture(coverBytes, 'Front Cover'), picture(backBytes, 'Back Cover')], null, [('Back Cover', backBytes)], null),
+        ([picture(backBytes, 'Back Cover')], null, [('Back Cover', backBytes)], null),
+        ([], pngBytes, [('Front Cover', pngBytes)], 'image/png'),
+      ];
+      const extensions = ['mp3', 'flac', 'ogg', 'opus', 'wma'];
+      for (final extension in extensions) {
+        for (final (index, (pictures, newCover, expectedPictures, expectedMimeType)) in cases.indexed) {
+          final reason = '$extension case $index';
+          final path = '${tempDir.path}/set_cover_$index.$extension';
+          File('test/assets/01 TempleOS Hymn Risen (Remix).$extension').copySync(path);
+
+          final file = TagLibFile.open(path)!;
+          expect(file.setPictures(pictures), isTrue, reason: reason);
+          expect(file.setCover(data: newCover), isTrue, reason: reason);
+          expect(file.save(), isTrue, reason: reason);
+          file.close();
+
+          final readFile = TagLibFile.open(path)!;
+          final readPictures = readFile.pictures;
+          expect(readPictures.map((e) => e.pictureType), expectedPictures.map((e) => e.$1), reason: reason);
+          expect(readPictures.map((e) => e.bytes), expectedPictures.map((e) => e.$2), reason: reason);
+          expect(readFile.coverData, newCover, reason: reason);
+          expect(readFile.coverMimeType, expectedMimeType, reason: reason);
+          readFile.close();
+        }
+      }
+    });
+
     test('Write and read back metadata fields for APE', () {
       final tempApe = File('${tempDir.path}/temp_test.ape');
       File('test/assets/01 TempleOS Hymn Risen (Remix).ape').copySync(tempApe.path);

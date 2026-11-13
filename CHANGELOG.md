@@ -1,3 +1,7 @@
+## 1.9.2
+* fix: `setCover` replaces only the cover (picked by `coverIndexOf`) and keeps the other pictures (like a back cover). Before it removed every picture. Removing the cover also keeps them
+* feat: `setCover` detects the mime type of jpeg, png, webp, gif and bmp images when `mimeType` is not given
+
 ## 1.9.1
 * fix: building from source failed with `redefinition of 'entryForCodePage'`. TagLib's code page tables are now built in, so wav text is decoded in the code page named by its `CSET` chunk and aiff text chunks are decoded as Mac OS Roman, like upstream TagLib does
 

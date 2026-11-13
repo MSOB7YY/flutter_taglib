@@ -180,8 +180,8 @@ void handleCoverArt(TagLibFile file, Uint8List? newCoverBytes) {
 ```
 
 If you need the full embedded picture list, use `file.pictures` and
-`file.setPictures(...)`. `setCover(...)` is a convenience wrapper that updates
-the first picture only.
+`file.setPictures(...)`. `setCover(...)` replaces or removes only the cover
+(picked by `TagLibFile.coverIndexOf`) and keeps the other pictures.
 
 ### 4. iOS File and Directory Access
 

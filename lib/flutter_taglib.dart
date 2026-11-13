@@ -1465,7 +1465,7 @@ class TagLibFile {
                   index,
                 ),
               ) ??
-              'image/jpeg';
+              _kDefaultPictureMimeType;
           final pictureType =
               _pointerToString(
                 bindings.taglib_bridge_pictures_picture_type(
@@ -1536,7 +1536,7 @@ class TagLibFile {
                   index,
                 ),
               ) ??
-              'image/jpeg';
+              _kDefaultPictureMimeType;
           final description = _pointerToString(
             bindings.taglib_bridge_pictures_description(picturesHandle, index),
           );
@@ -1641,19 +1641,42 @@ class TagLibFile {
     }
   }
 
-  /// Sets or updates the cover art of the file.
+  /// Replaces the cover picked by [coverIndexOf]. Other pictures (back cover, artist...) stay in place.
   ///
-  /// Pass `data: null` to remove the cover art.
-  /// [mimeType] defaults to `image/jpeg`.
+  /// Pass `data: null` to remove the cover only.
+  /// [mimeType] is detected from [data] when null, `image/jpeg` if unknown.
   ///
   /// Returns `true` on success, `false` on failure.
-  bool setCover({required Uint8List? data, String mimeType = 'image/jpeg'}) {
+  bool setCover({required Uint8List? data, String? mimeType}) {
     _checkClosed();
-    if (data == null || data.isEmpty) {
-      return setPictures(const <Picture>[]);
-    }
+    final newCover = _coverPictureOf(data, mimeType);
+    final currentPictures = pictures;
+    final coverIndex = coverIndexOf(currentPictures);
+    if (newCover == null && coverIndex == -1) return true;
 
-    return setPictures([Picture(bytes: data, mimeType: mimeType)]);
+    final newPictures = coverIndex == -1
+        ? [?newCover, ...currentPictures]
+        : [...currentPictures.take(coverIndex), ?newCover, ...currentPictures.skip(coverIndex + 1)];
+    return setPictures(newPictures);
+  }
+
+  static const _kDefaultPictureMimeType = 'image/jpeg';
+
+  static Picture? _coverPictureOf(Uint8List? data, String? mimeType) {
+    if (data == null || data.isEmpty) return null;
+    final coverMimeType = mimeType ?? _imageMimeTypeOf(data) ?? _kDefaultPictureMimeType;
+    return Picture(bytes: data, mimeType: coverMimeType);
+  }
+
+  static String? _imageMimeTypeOf(Uint8List bytes) {
+    if (bytes.length < 12) return null;
+    final head = String.fromCharCodes(bytes, 0, 12);
+    if (head.startsWith('\xFF\xD8\xFF')) return 'image/jpeg';
+    if (head.startsWith('\x89PNG')) return 'image/png';
+    if (head.startsWith('RIFF') && head.endsWith('WEBP')) return 'image/webp';
+    if (head.startsWith('GIF8')) return 'image/gif';
+    if (head.startsWith('BM')) return 'image/bmp';
+    return null;
   }
 
   /// Replaces the chapters of the file, sorted by [TagLibChapter.start].
