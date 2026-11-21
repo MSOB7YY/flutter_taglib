@@ -7,7 +7,7 @@ import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_c/native_toolchain_c.dart';
 
-const String _prebuiltReleaseTag = 'v1.9.2';
+const String _prebuiltReleaseTag = 'v1.9.3';
 const String _githubDownloadBaseUrl =
     'https://github.com/MSOB7YY/flutter_taglib/releases/download/$_prebuiltReleaseTag';
 
@@ -104,7 +104,7 @@ void main(List<String> args) async {
     }
 
     // --- Online Fetch TagLib & utfcpp ---
-    final taglibVersion = '2.3.1-c4';
+    final taglibVersion = '2.3.1-c5';
     final utfcppVersion = '4.2.0';
 
     final cacheDir = Directory('.dart_tool/flutter_taglib');
