@@ -61,6 +61,13 @@ jobs:
             flutter-build-command: flutter build linux --release
             output-name: libflutter_taglib_linux_x64.so
             search-pattern: libflutter_taglib_native.so
+            build-arch: x64
+          - platform: linux-arm64
+            os: ubuntu-22.04-arm
+            flutter-build-command: flutter build linux --release
+            output-name: libflutter_taglib_linux_arm64.so
+            search-pattern: libflutter_taglib_native.so
+            build-arch: arm64
 
     env:
       FLUTTER_TAGLIB_BUILD_DESKTOP_FROM_SOURCE: "true"
@@ -75,9 +82,17 @@ jobs:
           java-version: "17"
 
       - name: Set up Flutter
+        if: runner.arch != 'ARM64'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+
+      # -- flutter-action only has x64 linux archives, a git checkout fetches the arm64 dart sdk itself
+      - name: Set up Flutter (arm64)
+        if: runner.arch == 'ARM64'
+        run: |
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -137,14 +152,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          file_path="$(find example/build/linux/x64/release/bundle/lib -name '${{ matrix.search-pattern }}' | head -n 1)"
+          file_path="$(find example/build/linux/${{ matrix.build-arch }}/release/bundle/lib -name '${{ matrix.search-pattern }}' | head -n 1)"
           if [ -z "$file_path" ]; then
-            file_path="$(find example/build/linux/x64/release -path '*native_assets*' -name '${{ matrix.search-pattern }}' | head -n 1)"
+            file_path="$(find example/build/linux/${{ matrix.build-arch }}/release -path '*native_assets*' -name '${{ matrix.search-pattern }}' | head -n 1)"
           fi
           if [ -z "$file_path" ]; then
             echo "Could not find ${{ matrix.search-pattern }}"
             echo "Listing candidate Linux outputs:"
-            find example/build/linux/x64/release -maxdepth 8 \( -name '*.so' -o -path '*native_assets*' \) | sort
+            find example/build/linux/${{ matrix.build-arch }}/release -maxdepth 8 \( -name '*.so' -o -path '*native_assets*' \) | sort
             exit 1
           fi
           cp "$file_path" "dist/${{ matrix.output-name }}"

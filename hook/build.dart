@@ -7,7 +7,7 @@ import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_c/native_toolchain_c.dart';
 
-const String _prebuiltReleaseTag = 'v1.9.3';
+const String _prebuiltReleaseTag = 'v1.9.4';
 const String _githubDownloadBaseUrl =
     'https://github.com/MSOB7YY/flutter_taglib/releases/download/$_prebuiltReleaseTag';
 
@@ -46,25 +46,28 @@ void main(List<String> args) async {
           .split('.')
           .last
           .toLowerCase();
-      if (archStr == 'x64') {
-        await _bundlePrebuiltBinary(
-          input: input,
-          output: output,
-          remoteFileName: targetOSStr == 'windows'
-              ? 'flutter_taglib_windows_x64.dll'
-              : 'libflutter_taglib_linux_x64.so',
-          localFileName: targetOSStr == 'windows'
-              ? 'flutter_taglib_native.dll'
-              : 'libflutter_taglib_native.so',
-          targetOS: targetOSStr,
-          arch: archStr,
-        );
-        return;
-      } else {
+      final remoteFileName = switch ((targetOSStr, archStr)) {
+        ('windows', 'x64') => 'flutter_taglib_windows_x64.dll',
+        ('linux', 'x64') => 'libflutter_taglib_linux_x64.so',
+        ('linux', 'arm64') => 'libflutter_taglib_linux_arm64.so',
+        _ => null,
+      };
+      if (remoteFileName == null) {
         throw UnsupportedError(
-          'flutter_taglib prebuilt binaries are only supported on x64 architecture. Please build from source for $archStr.',
+          'flutter_taglib has no prebuilt binary for $targetOSStr $archStr (windows x64, linux x64 and linux arm64 only). Please build from source.',
         );
       }
+      await _bundlePrebuiltBinary(
+        input: input,
+        output: output,
+        remoteFileName: remoteFileName,
+        localFileName: targetOSStr == 'windows'
+            ? 'flutter_taglib_native.dll'
+            : 'libflutter_taglib_native.so',
+        targetOS: targetOSStr,
+        arch: archStr,
+      );
+      return;
     }
 
     final packageName = input.packageName;

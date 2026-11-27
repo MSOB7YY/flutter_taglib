@@ -1,3 +1,6 @@
+## 1.9.4
+* feat: prebuilt binary for linux arm64
+
 ## 1.9.2
 * fix: `setCover` replaces only the cover (picked by `coverIndexOf`) and keeps the other pictures (like a back cover). Before it removed every picture. Removing the cover also keeps them
 * feat: `setCover` detects the mime type of jpeg, png, webp, gif and bmp images when `mimeType` is not given
